@@ -33,7 +33,7 @@ class _Empty(BaseModel):
 async def list_models(request: Request) -> Response:
     state = request.app.state
     session, _ = await decrypt_request(request, state.session_manager, _Empty)
-    payload = ModelList(models=state.models.snapshot())
+    payload = ModelList(models=state.models.snapshot(tenant=session.tenant))
     body = encrypt_response(session, payload, method=request.method, path=request.url.path)
     return Response(content=body, media_type="application/octet-stream")
 
@@ -46,24 +46,35 @@ async def download_model(request: Request) -> Response:
         err = ErrorEnvelope(code=ErrorCode.BAD_REQUEST, message="downloads disabled")
         body = encrypt_response(session, err, method=request.method, path=request.url.path)
         return Response(status_code=403, content=body, media_type="application/octet-stream")
+    tenant_registry = state.registry.for_tenant(session.tenant)
     try:
         entry = await asyncio.to_thread(
             download_and_seal,
             repo_id=req.repo_id,
             filename=req.filename,
             expected_sha256=req.sha256,
-            registry=state.registry,
+            registry=tenant_registry,
             at_rest=state.at_rest_key,
             allowed_repo_prefixes=state.settings.models.allowed_repo_prefixes,
             disk_quota_gb=state.settings.models.disk_quota_gb,
         )
     except DownloadError as e:
-        audit_event("model.download.fail", code=e.code.value, repo=req.repo_id)
+        audit_event(
+            "model.download.fail",
+            code=e.code.value,
+            repo=req.repo_id,
+            tenant=session.tenant,
+        )
         err = ErrorEnvelope(code=e.code, message=str(e))
         body = encrypt_response(session, err, method=request.method, path=request.url.path)
         return Response(status_code=400, content=body, media_type="application/octet-stream")
-    audit_event("model.download.ok", id=entry.id, sha=entry.sha256_plaintext)
-    payload = ModelList(models=state.models.snapshot())
+    audit_event(
+        "model.download.ok",
+        id=entry.id,
+        sha=entry.sha256_plaintext,
+        tenant=session.tenant,
+    )
+    payload = ModelList(models=state.models.snapshot(tenant=session.tenant))
     body = encrypt_response(session, payload, method=request.method, path=request.url.path)
     return Response(content=body, media_type="application/octet-stream")
 
@@ -76,9 +87,9 @@ class _RemoveReq(BaseModel):
 async def remove_model(request: Request) -> Response:
     state = request.app.state
     session, req = await decrypt_request(request, state.session_manager, _RemoveReq)
-    await state.models.force_unload(req.id)
-    state.registry.remove(req.id)
-    audit_event("model.remove", id=req.id)
-    payload = ModelList(models=state.models.snapshot())
+    await state.models.force_unload(req.id, tenant=session.tenant)
+    state.registry.for_tenant(session.tenant).remove(req.id)
+    audit_event("model.remove", id=req.id, tenant=session.tenant)
+    payload = ModelList(models=state.models.snapshot(tenant=session.tenant))
     body = encrypt_response(session, payload, method=request.method, path=request.url.path)
     return Response(content=body, media_type="application/octet-stream")

@@ -23,6 +23,7 @@ class Session:
     max_lifetime_seconds: int
     client_fingerprint: str
     scopes: frozenset[str]
+    tenant: str = "default"
     replay: ReplayWindow = field(default_factory=ReplayWindow)
     s2c_counter: int = 0
     closed: bool = False
@@ -65,6 +66,7 @@ class SessionManager:
             max_lifetime_seconds=self._max_life,
             client_fingerprint=material.client_fingerprint,
             scopes=frozenset(material.scopes),
+            tenant=material.tenant,
         )
         async with self._lock:
             self._by_id[sess.session_id] = sess

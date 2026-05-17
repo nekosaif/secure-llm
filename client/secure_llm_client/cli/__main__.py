@@ -25,12 +25,14 @@ admin_app = typer.Typer(help="admin / control plane (requires admin scope)")
 admin_models_app = typer.Typer(help="admin model controls")
 admin_sessions_app = typer.Typer(help="admin session controls")
 admin_log_app = typer.Typer(help="admin log-level controls")
+admin_loras_app = typer.Typer(help="admin LoRA controls")
 app.add_typer(models_app, name="models")
 app.add_typer(debug_app, name="debug")
 app.add_typer(admin_app, name="admin")
 admin_app.add_typer(admin_models_app, name="models")
 admin_app.add_typer(admin_sessions_app, name="sessions")
 admin_app.add_typer(admin_log_app, name="log-level")
+admin_app.add_typer(admin_loras_app, name="loras")
 
 
 def _config_dir() -> Path:
@@ -132,6 +134,30 @@ def complete(
     client = _client(base_url, insecure=insecure)
     resp = client.completions.create(model=model, prompt=prompt, max_tokens=max_tokens)
     console.print(resp.text)
+
+
+@app.command()
+def embed(
+    text: list[str] = typer.Argument(..., help="one or more strings to embed"),
+    model: str = typer.Option(..., "--model", "-m"),
+    base_url: str = typer.Option("https://127.0.0.1:8443", "--server", "-s"),
+    insecure: bool = typer.Option(False, "--insecure"),
+    show: bool = typer.Option(False, "--show", help="print full vectors instead of dim+norm"),
+) -> None:
+    """Embed one or more strings; prints the dimensionality + L2 norm of each."""
+    import math
+
+    client = _client(base_url, insecure=insecure)
+    resp = client.embeddings.create(model=model, input=list(text))
+    for d in resp.data:
+        vec = d.embedding
+        if show:
+            console.print_json(data={"index": d.index, "embedding": vec})
+        else:
+            norm = math.sqrt(sum(x * x for x in vec))
+            console.print(
+                f"[cyan]#{d.index}[/]  dim=[bold]{len(vec)}[/]  norm={norm:.4f}  head={vec[:4]}"
+            )
 
 
 @app.command()
@@ -306,6 +332,77 @@ def admin_shutdown(
     client = _client(base_url, insecure=insecure)
     client.admin.shutdown(grace_seconds=grace)
     console.print(f"[yellow]shutdown requested ({grace}s grace)[/]")
+
+
+@admin_loras_app.command("list")
+def admin_loras_list(
+    base_url: str = typer.Option("https://127.0.0.1:8443", "--server", "-s"),
+    insecure: bool = typer.Option(False, "--insecure"),
+) -> None:
+    client = _client(base_url, insecure=insecure)
+    t = Table(title="loras")
+    for col in ("id", "base_model", "size", "repo", "sha256"):
+        t.add_column(col)
+    for entry in client.admin.loras.list():
+        t.add_row(
+            entry.id,
+            entry.base_model_id or "-",
+            f"{entry.bytes_on_disk / 1e9:.2f} GB",
+            entry.repo_id or "-",
+            entry.sha256[:12] + "…",
+        )
+    console.print(t)
+
+
+@admin_loras_app.command("pull")
+def admin_loras_pull(
+    spec: str = typer.Argument(..., help="repo:filename"),
+    sha256: str | None = typer.Option(None, "--sha256"),
+    base_model_id: str | None = typer.Option(None, "--base-model"),
+    base_url: str = typer.Option("https://127.0.0.1:8443", "--server", "-s"),
+    insecure: bool = typer.Option(False, "--insecure"),
+) -> None:
+    if ":" not in spec:
+        console.print("[red]use repo:filename[/]")
+        raise typer.Exit(2)
+    repo, filename = spec.split(":", 1)
+    client = _client(base_url, insecure=insecure)
+    info = client.admin.loras.pull(
+        repo, filename=filename, sha256=sha256, base_model_id=base_model_id
+    )
+    console.print(f"[green]ok[/] pulled {info.id}  sha={info.sha256[:12]}…")
+
+
+@admin_loras_app.command("rm")
+def admin_loras_rm(
+    lora_id: str = typer.Argument(...),
+    base_url: str = typer.Option("https://127.0.0.1:8443", "--server", "-s"),
+    insecure: bool = typer.Option(False, "--insecure"),
+) -> None:
+    client = _client(base_url, insecure=insecure)
+    removed = client.admin.loras.rm(lora_id)
+    console.print(f"removed={removed}")
+
+
+@admin_loras_app.command("apply")
+def admin_loras_apply(
+    base_model: str = typer.Argument(..., help="base model id"),
+    lora_spec: list[str] = typer.Argument(..., help="LoRA pin: <id> or <id>@<scale> (repeatable)"),
+    n_ctx: int | None = typer.Option(None, "--ctx"),
+    base_url: str = typer.Option("https://127.0.0.1:8443", "--server", "-s"),
+    insecure: bool = typer.Option(False, "--insecure"),
+) -> None:
+    parsed: list[tuple[str, float]] = []
+    for raw in lora_spec:
+        if "@" in raw:
+            lid, scale_s = raw.split("@", 1)
+            parsed.append((lid.strip(), float(scale_s)))
+        else:
+            parsed.append((raw.strip(), 1.0))
+    client = _client(base_url, insecure=insecure)
+    out = client.admin.loras.apply(base_model, loras=parsed, n_ctx=n_ctx)
+    applied = [(lr["id"], lr["scale"]) for lr in out["loras"]]
+    console.print(f"[green]ok[/] applied {applied} on {out['base_model_id']}")
 
 
 def main() -> None:  # pragma: no cover

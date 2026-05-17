@@ -40,7 +40,7 @@ async def create_session(req: HandshakeRequest, request: Request) -> Response:
         raise HTTPException(status_code=401, detail=err.model_dump()) from None
     sess = await state.session_manager.create(material)
     handshake_total.labels("ok").inc()
-    audit_event("handshake.ok", client_fp=sess.client_fingerprint)
+    audit_event("handshake.ok", client_fp=sess.client_fingerprint, tenant=sess.tenant)
     return Response(content=response.model_dump_json(), media_type="application/json")
 
 

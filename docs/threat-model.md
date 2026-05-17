@@ -14,14 +14,15 @@ log, network, or backup access to the server.
 | Cold-storage / backup access to disk | Models on disk are `age`-encrypted. Logs are payload-redacted at the structlog processor layer. No plaintext model bytes on persistent disk (tmpfs + unlink-after-open). |
 | Stolen client key | Allowlist entry can be revoked (flag, not delete) via `authorized_clients.toml` + admin reload. Server keeps no per-session secret on disk. |
 | Stolen server key | Operator rotates server identity (`sllm-admin rotate-server-key --grace`); clients re-pin. Existing sessions stay valid until TTL. |
-| Resource DoS (slowloris, oversized bodies, body-flood) | uvicorn slowloris timeouts, request size limit, per-client-fingerprint token-bucket rate limit. |
+| Resource DoS (slowloris, oversized bodies, body-flood) | uvicorn slowloris timeouts, request size limit, per-`(tenant, client)` token-bucket rate limit. |
+| Tenant-A reading tenant-B's data (v1.2) | `AuthorizedClient.tenant` is derived server-side from the allowlist (never client-asserted on the wire). The directory layout `data/keys/tenants/<t>/` *forces* the tenant on entries inside it. Models, LoRAs, sessions, audit events, structlog contextvars, and rate-limit buckets are all keyed by `(tenant, …)`. Admin endpoints filter to the caller's tenant; cross-tenant ops require `super_admin`. |
 
 ## Out of scope (we do **not** defend against — by design)
 
 | Threat | Reason |
 |---|---|
-| Root on the running server | Plaintext is in RAM during inference. Only a TEE defends against this. TEE is explicitly out of scope. |
-| Multi-tenant mutual distrust | One allowlist, one server identity. Mutually distrusting clients should run separate instances. |
+| Root on the running server | Plaintext is in RAM during inference. Only a TEE defends against this. Planned for v2.0 via SEV-SNP attestation in the handshake. |
+| Tenant-vs-operator distrust | v1.2's tenant isolation is policy enforced by the server. The operator (anyone with root on the host) is still inside the trust boundary — they can read RAM, log payloads, or read the at-rest age identity. Tenants that distrust the operator (not just each other) need separate instances or a TEE. |
 | DoS via legitimate-looking encrypted requests | Rate limit + queue caps mitigate but don't eliminate. |
 | Side channels in `llama.cpp` | We trust the inference backend. |
 | Cryptographic novelty | All primitives via libsodium (PyNaCl) and age (pyrage). No custom curves, ciphers, or MACs. |

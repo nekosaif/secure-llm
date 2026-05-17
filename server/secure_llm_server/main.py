@@ -20,7 +20,16 @@ from secure_llm_server.middleware.rate_limit import RateLimitMiddleware
 from secure_llm_server.middleware.request_id import RequestIdMiddleware
 from secure_llm_server.middleware.security_headers import SecurityHeadersMiddleware
 from secure_llm_server.middleware.size_limit import SizeLimitMiddleware
-from secure_llm_server.routers import admin, chat, completions, debug, models, session, system
+from secure_llm_server.routers import (
+    admin,
+    chat,
+    completions,
+    debug,
+    embeddings,
+    models,
+    session,
+    system,
+)
 
 _log = structlog.get_logger("secure_llm_server.main")
 
@@ -67,6 +76,7 @@ def create_app(config_path: Path) -> FastAPI:
     app.include_router(models.router)
     app.include_router(chat.router)
     app.include_router(completions.router)
+    app.include_router(embeddings.router)
     app.include_router(system.router)
     app.include_router(debug.router)
     app.include_router(admin.router)

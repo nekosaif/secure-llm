@@ -56,6 +56,24 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**" = ["S", "PLR2004", "PLC0415"]
 "client/secure_llm_client/cli/__main__.py" = ["B008"]
+# Hard-coded SVG markup with embedded coordinates and unicode
+# (×, −, →) for diagrams — readability beats wrapping.
+"scripts/render_diagrams.py" = ["E501", "RUF001"]
+
+[tool.bandit]
+# Mirror the legitimate-pattern ignores from ruff so bandit doesn't
+# re-flag what we've already reviewed.
+#   B101  asserts in non-test code — used in envelope.py for invariants
+#         that cannot be false unless we ship a bug; cheaper than raising
+#   B108  /dev/shm strings — deliberate; tmpfs is the entire point
+#   B110  try/except/pass — observability fallbacks (must not raise)
+#   B112  try/except/continue — registry sidecar sweep, skips bad rows
+#   B404  subprocess module — smoke script launches the server
+#   B603  subprocess call without shell=True — same
+#   B615  huggingface unsafe download — we SHA-256-verify after download,
+#         so revision pinning is redundant (covered in downloader.py)
+skips = ["B101", "B108", "B110", "B112", "B404", "B603", "B615"]
+exclude_dirs = [".venv", "build", "dist", "data", "docs"]
 
 [tool.mypy]
 python_version = "3.11"

@@ -36,6 +36,9 @@ class ServerIdentity:
     age_secret_path: Path  # the age identity file (managed by pyrage)
 
 
+DEFAULT_TENANT = "default"
+
+
 @dataclass(frozen=True, slots=True)
 class AuthorizedClient:
     name: str
@@ -45,6 +48,7 @@ class AuthorizedClient:
     revoked: bool = False
     not_before: int | None = None
     not_after: int | None = None
+    tenant: str = DEFAULT_TENANT
 
     @property
     def fingerprint(self) -> str:
@@ -137,7 +141,7 @@ def load_server_identity(key_dir: Path) -> ServerIdentity:
     )
 
 
-def load_allowlist(path: Path) -> dict[bytes, AuthorizedClient]:
+def _parse_clients_file(path: Path, *, forced_tenant: str | None) -> dict[bytes, AuthorizedClient]:
     if not path.exists():
         return {}
     with path.open("rb") as f:
@@ -148,6 +152,10 @@ def load_allowlist(path: Path) -> dict[bytes, AuthorizedClient]:
         e_pk = base64.b64decode(entry["ed25519_pk"])
         if len(x_pk) != 32 or len(e_pk) != 32:
             raise ValueError(f"client {entry.get('name', '?')}: bad pk length")
+        # If the entry was loaded from a per-tenant directory, the path's
+        # tenant wins over any value in the TOML — a misnamed entry can't
+        # escape its directory.
+        tenant = forced_tenant or str(entry.get("tenant", DEFAULT_TENANT))
         out[x_pk] = AuthorizedClient(
             name=entry.get("name", x_pk.hex()[:16]),
             x25519_pk=x_pk,
@@ -156,7 +164,34 @@ def load_allowlist(path: Path) -> dict[bytes, AuthorizedClient]:
             revoked=bool(entry.get("revoked", False)),
             not_before=entry.get("not_before"),
             not_after=entry.get("not_after"),
+            tenant=tenant,
         )
+    return out
+
+
+def load_allowlist(path: Path) -> dict[bytes, AuthorizedClient]:
+    """Read the root ``authorized_clients.toml`` plus any per-tenant files.
+
+    Layout::
+
+        keys/
+          authorized_clients.toml            # default tenant
+          tenants/
+            <tenant>/authorized_clients.toml # tenant-scoped; tenant wins
+
+    On a duplicate ``x25519_pk`` across files, the tenant-scoped entry wins
+    over the default file so an operator can't accidentally give a client
+    a wider tenant scope by re-listing them at the root.
+    """
+    out = _parse_clients_file(path, forced_tenant=DEFAULT_TENANT)
+    tenants_dir = path.parent / "tenants"
+    if tenants_dir.is_dir():
+        for sub in sorted(tenants_dir.iterdir()):
+            if not sub.is_dir():
+                continue
+            sub_file = sub / "authorized_clients.toml"
+            tenant_entries = _parse_clients_file(sub_file, forced_tenant=sub.name)
+            out.update(tenant_entries)  # tenant-scoped wins on collision
     return out
 
 

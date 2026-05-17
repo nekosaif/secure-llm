@@ -32,7 +32,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        key = getattr(request.state, "client_fingerprint", None) or "anon"
+        fp = getattr(request.state, "client_fingerprint", None) or "anon"
+        tenant = getattr(request.state, "tenant", "default")
+        key = f"{tenant}:{fp}"
         if not await self._allow(key):
             return JSONResponse(
                 {"code": ErrorCode.RATE_LIMITED.value, "message": "slow down"},

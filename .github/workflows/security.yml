@@ -15,9 +15,12 @@ jobs:
       - uses: astral-sh/setup-uv@v3
       - run: uv sync --all-packages
       - name: pip-audit
-        run: uv run pip-audit --strict
+        # Exports the production dep tree of each workspace member (no editable
+        # workspace packages, no dev deps) and audits that. Reasons + accepted
+        # ignores live in scripts/sec_audit.sh.
+        run: bash scripts/sec_audit.sh
       - name: bandit
-        run: uv run bandit -q -r protocol server client
+        run: uv run bandit -c pyproject.toml -q -r protocol server client
       - name: trivy image (build only, no push)
         uses: aquasecurity/trivy-action@master
         with:

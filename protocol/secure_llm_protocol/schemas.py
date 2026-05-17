@@ -11,7 +11,11 @@ from secure_llm_protocol.version import PROTOCOL_VERSION
 
 
 class _Strict(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+    # ``str_strip_whitespace`` is intentionally NOT set: chat/completion
+    # content payloads carry meaningful whitespace (leading/trailing newlines
+    # in prompts, multi-token deltas like " the ") and stripping them mangles
+    # streaming output.
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
 
 # ---- handshake (plaintext on the wire; only endpoint that is) ----
@@ -63,6 +67,13 @@ class ChatMessage(_Strict):
 SamplingFloat = Annotated[float, Field(ge=0.0, le=4.0)]
 
 
+class LoraRef(_Strict):
+    """A LoRA adapter the caller wants stacked on the base model for this request."""
+
+    id: str
+    scale: Annotated[float, Field(ge=-2.0, le=2.0)] = 1.0
+
+
 class _BaseGenerationParams(_Strict):
     model: str
     max_tokens: Annotated[int, Field(ge=1, le=32_768)] = 512
@@ -76,6 +87,7 @@ class _BaseGenerationParams(_Strict):
     stop: list[str] = Field(default_factory=list)
     stream: bool = False
     n_ctx: Annotated[int, Field(ge=128, le=131_072)] | None = None
+    loras: list[LoraRef] = Field(default_factory=list)
 
 
 class ChatCompletionRequest(_BaseGenerationParams):
@@ -138,6 +150,32 @@ class CompletionResponse(_Strict):
     usage: _Usage
 
 
+# ---- embeddings (OpenAI-compatible subset) ----
+
+
+class EmbeddingsRequest(_Strict):
+    model: str
+    input: str | list[str]
+
+
+class _EmbeddingDatum(_Strict):
+    index: int
+    embedding: list[float]
+
+
+class _EmbeddingsUsage(_Strict):
+    prompt_tokens: int
+    total_tokens: int
+
+
+class EmbeddingsResponse(_Strict):
+    id: str
+    model: str
+    created: int
+    data: list[_EmbeddingDatum]
+    usage: _EmbeddingsUsage
+
+
 # ---- models ----
 
 ModelState = Literal[
@@ -172,6 +210,37 @@ class ModelDownloadRequest(_Strict):
     repo_id: str
     filename: str
     sha256: str | None = None  # if provided, downloader verifies
+
+
+# ---- LoRA adapters ----
+
+
+class LoraInfo(_Strict):
+    id: str
+    repo_id: str
+    filename: str
+    sha256: str
+    bytes_on_disk: int
+    base_model_id: str | None = None
+
+
+class LoraList(_Strict):
+    loras: list[LoraInfo]
+
+
+class LoraDownloadRequest(_Strict):
+    repo_id: str
+    filename: str
+    sha256: str | None = None
+    base_model_id: str | None = None
+
+
+class LoraApplyRequest(_Strict):
+    """Eagerly load a base model with these adapters stacked, ready for inference."""
+
+    base_model_id: str
+    loras: list[LoraRef] = Field(default_factory=list)
+    n_ctx: Annotated[int, Field(ge=128, le=131_072)] | None = None
 
 
 # ---- system / debug / admin ----

@@ -13,6 +13,7 @@ from secure_llm_client.resources.admin import AdminResource
 from secure_llm_client.resources.chat import ChatResource
 from secure_llm_client.resources.completions import CompletionsResource
 from secure_llm_client.resources.debug import DebugResource
+from secure_llm_client.resources.embeddings import EmbeddingsResource
 from secure_llm_client.resources.models import ModelsResource
 from secure_llm_client.resources.system import SystemResource
 from secure_llm_client.transport import Transport
@@ -71,6 +72,7 @@ class SecureLLMClient:
 
         self.models = ModelsResource(self._transport)
         self.chat = ChatResource(self._transport)
+        self.embeddings = EmbeddingsResource(self._transport)
         self.completions = CompletionsResource(self._transport)
         self.system = SystemResource(self._transport)
         self.debug = DebugResource(self._transport)

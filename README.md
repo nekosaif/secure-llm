@@ -68,12 +68,25 @@ mmaps it.
 - **A `sllm` CLI** for chat, completions, model management, system
   inspection, and operator/admin tasks.
 - **Encryption at rest** for model weights via `age` (pyrage).
+- **Streaming chat completions** (v1.1) over SSE — each chunk is its
+  own envelope sharing the session's `s2c` counter; client falls back
+  to non-streaming if the server refuses.
+- **Embeddings endpoint** (v1.1) — `client.embeddings.create(model=,
+  input=)` over the same envelope.
+- **LoRA hot-swap** (v1.2) — sealed `*.lora.gguf.age` adapters; load
+  via `client.admin.loras.apply(base, loras=[(id, scale)])` or pin per
+  request with `loras=[LoraRef(id=, scale=)]`. The manager reloads
+  transparently when the LoRA set changes.
+- **Multi-tenant isolation** (v1.2) — each authorized client carries a
+  `tenant`; sessions, models, LoRAs, sessions/clients admin views, and
+  audit events are scoped to their tenant. A `super_admin` scope sees
+  across tenants; tenant-admins cannot.
 - **Debug + admin APIs** so operators can introspect status, recent
   errors, queue depth, log tail, and effective config — *over the same
   encrypted channel* — without shelling into the host.
 - **Production scaffolding**: structlog with payload redaction,
   Prometheus metrics, health probes, in-memory ring log, error tracker,
-  audit log, per-client rate limit, request size limit, security
+  audit log, per-tenant rate limit, request size limit, security
   headers, graceful shutdown, hardened systemd unit, distroless
   Dockerfile, GitHub Actions.
 
@@ -773,6 +786,11 @@ All under `/v1/debug/*` (any authenticated client) and `/v1/admin/*`
 (requires `"admin"` in the client's allowlist `scopes`). Every body is
 envelope-encrypted; admin mutations are audit-logged.
 
+**Tenant scoping (v1.2).** A tenant-admin only sees its own tenant on
+the `sessions/list`, `clients/list`, `models/*`, and `loras/*`
+endpoints, and cannot terminate a session that doesn't belong to it.
+Cross-tenant operations require the `super_admin` scope.
+
 | Endpoint | What it does |
 |---|---|
 | `POST /v1/debug/status` | Live status snapshot: uptime, system metrics, loaded models, recent errors, last N log lines |
@@ -780,13 +798,18 @@ envelope-encrypted; admin mutations are audit-logged.
 | `POST /v1/debug/version` | Protocol + server version |
 | `POST /v1/debug/logs` | Tail the ring log (redacted; non-admin sees only their own client_fp's entries) |
 | `POST /v1/debug/errors` | Recent error_ids + sanitized summaries |
-| `POST /v1/admin/sessions/list` | All active sessions |
-| `POST /v1/admin/sessions/terminate` | Force-terminate a session, zeroize keys |
-| `POST /v1/admin/clients/list` | Allowlist contents + revocation flags |
-| `POST /v1/admin/clients/reload` | Re-read `authorized_clients.toml` |
-| `POST /v1/admin/models/list` | Detailed model state (last_error, bytes, queue depth) |
-| `POST /v1/admin/models/preload` | Force-load a model |
-| `POST /v1/admin/models/unload` | Force-unload a model |
+| `POST /v1/admin/sessions/list` | Active sessions in the caller's tenant (all tenants with `super_admin`) |
+| `POST /v1/admin/sessions/terminate` | Force-terminate a session (cross-tenant requires `super_admin`) |
+| `POST /v1/admin/clients/list` | Allowlist contents + revocation flags, filtered to the caller's tenant |
+| `POST /v1/admin/clients/reload` | Re-read `authorized_clients.toml` (root + every `tenants/*/`) |
+| `POST /v1/admin/models/list` | Detailed model state (last_error, bytes, queue depth), tenant-scoped |
+| `POST /v1/admin/models/preload` | Force-load a model into the caller's tenant slot |
+| `POST /v1/admin/models/unload` | Force-unload all slots for `(tenant, model_id)` |
+| `POST /v1/admin/loras/list` | LoRA adapters available to the caller's tenant |
+| `POST /v1/admin/loras/pull` | Pull a LoRA from HF, SHA-verify, seal at rest in the tenant's `loras/` dir |
+| `POST /v1/admin/loras/rm` | Delete a LoRA blob + sidecar |
+| `POST /v1/admin/loras/apply` | Eagerly load a base model with a `[(id, scale), …]` stack |
+| `POST /v1/admin/tenants/list` | Roll-up of clients/sessions/models per tenant (`super_admin` only) |
 | `POST /v1/admin/log-level` | Set per-component log level, optionally with TTL |
 | `POST /v1/admin/gc` | `gc.collect()` + `torch.cuda.empty_cache()` if CUDA |
 | `POST /v1/admin/shutdown` | Graceful shutdown (drains queues, zeroizes keys) |
@@ -807,6 +830,20 @@ GET /metrics       Prometheus (mounted on the metrics_bind interface)
 env vars with the prefix `SECURE_LLM_` and nested-section delimiter
 `__` (e.g. `SECURE_LLM_SERVER__PORT=9000`). CLI flags `--host` and
 `--port` on `secure-llm-server` take precedence over both.
+
+**Tenants on disk (v1.2):**
+
+```
+data/keys/authorized_clients.toml              # default tenant
+data/keys/tenants/<tenant>/authorized_clients.toml   # one per tenant
+data/models/                                   # default tenant models
+data/models/tenants/<tenant>/                  # named tenants
+data/loras/                                    # default tenant LoRAs
+data/loras/tenants/<tenant>/                   # named tenants
+```
+
+The per-tenant directory **forces** the `tenant` field on every entry
+inside it, so a misnamed allowlist row can't claim a wider scope.
 
 ```toml
 [server]
@@ -992,20 +1029,26 @@ Review before deploying.
 
 ---
 
-## Out of scope (v1)
+## Out of scope (current)
 
 - **Confidential computing / TEE.** Plaintext is in RAM during
   inference. Only a TEE defends against an attacker with root on the
-  server, and we don't go there in v1.
-- **Multi-tenant mutual distrust.** One allowlist per server; clients
-  who don't trust each other should run separate instances.
-- **SSE streaming** of chat completions. Server returns a clean
-  `bad_request: streaming not implemented in v1` so clients fall back
-  to non-streaming. Deferred to v1.1.
-- **LoRA hot-swap, fine-tuning, embeddings, image/audio modalities.**
-- **Federated routing / load balancing across servers.**
+  server. Planned for v2.0.
+- **Multi-tenant *mutual distrust*.** Per-tenant allowlist + storage
+  scoping landed in v1.2, so cooperating tenants on one server are
+  isolated by policy. The server operator is still inside the trust
+  boundary, however; tenants that distrust the operator (not just each
+  other) need separate instances. A TEE would close that gap.
+- **Fine-tuning** — different product. Inference + LoRA hot-swap only.
+- **Image / audio modalities** — planned for v2.0.
+- **Federated routing / load balancing across servers** — planned for
+  v1.3 (shared session store + identity replication).
 
-If you need any of these, open an issue with the use case.
+Shipped since v1.0: **SSE streaming** + **embeddings** (v1.1),
+**LoRA hot-swap** + **multi-tenant** (v1.2).
+
+If you need any of the remaining items, open an issue with the use case
+or follow [`PLAN.md`](PLAN.md) — the v1.3 / v2.0 roadmap lives there.
 
 ---
 

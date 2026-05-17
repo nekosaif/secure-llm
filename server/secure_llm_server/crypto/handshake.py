@@ -51,6 +51,7 @@ class SessionMaterial:
     ttl_seconds: int
     client_fingerprint: str
     scopes: tuple[str, ...]
+    tenant: str = "default"
 
 
 def _b64d(s: str) -> bytes:
@@ -197,6 +198,7 @@ def perform_handshake(
         ttl_seconds=ttl_seconds,
         client_fingerprint=entry.fingerprint,
         scopes=tuple(entry.scopes),
+        tenant=entry.tenant,
     )
     # Drop references to ephemeral DH outputs; Python can't truly wipe these.
     del dh1, dh2, ikm, keystream, server_eph_sk

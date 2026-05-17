@@ -17,7 +17,10 @@ from secure_llm_server.crypto.at_rest import AtRestKey
 from secure_llm_server.crypto.keystore import load_or_init_keystore
 from secure_llm_server.health import Readiness
 from secure_llm_server.models.manager import ModelManager
-from secure_llm_server.models.registry import ModelRegistry
+from secure_llm_server.models.registry import (
+    MultiTenantLoraRegistry,
+    MultiTenantRegistry,
+)
 from secure_llm_server.observability.error_tracker import ErrorTracker
 from secure_llm_server.observability.status import StatusBuilder
 from secure_llm_server.session.manager import SessionManager
@@ -58,8 +61,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     at_rest = AtRestKey(keystore.server.age_secret_path)
     app.state.at_rest_key = at_rest
 
-    registry = ModelRegistry(Path(settings.models.storage_dir))
+    registry = MultiTenantRegistry(Path(settings.models.storage_dir))
     app.state.registry = registry
+
+    # LoRA storage is a sibling of the model dir; per-tenant subdirs are lazy.
+    lora_dir = Path(settings.models.storage_dir).parent / "loras"
+    lora_registry = MultiTenantLoraRegistry(lora_dir)
+    app.state.lora_registry = lora_registry
 
     models = ModelManager(
         registry=registry,
@@ -71,6 +79,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         n_threads=settings.inference.n_threads,
         n_ctx_default=settings.inference.n_ctx_default,
         queue_depth=settings.inference.queue_depth_per_model,
+        lora_registry=lora_registry,
     )
     app.state.models = models
 

@@ -96,9 +96,11 @@ async def decrypt_request(
 
     session.touch()
     request.state.client_fingerprint = session.client_fingerprint
+    request.state.tenant = session.tenant
     structlog.contextvars.bind_contextvars(
         session_id=session.session_id_b64,
         client_fp=session.client_fingerprint,
+        tenant=session.tenant,
     )
     return session, parsed
 

@@ -39,11 +39,74 @@ Important sections:
 ## Add a client
 
 1. On the client machine: `sllm keygen`. Copy the printed allowlist block.
-2. On the server: append the block to `authorized_clients.toml`. Set
-   `scopes = ["chat"]` for normal users, `["chat", "admin"]` for
-   operators.
-3. Reload: `sllm admin clients reload --server https://your-host` from an
-   admin-scoped client, or `kill -HUP <pid>` on the server.
+2. On the server: append the block to one of:
+   - `data/keys/authorized_clients.toml` for the default tenant, or
+   - `data/keys/tenants/<tenant>/authorized_clients.toml` for a named
+     tenant (the directory name **forces** the tenant — any
+     `tenant = "..."` line inside that file is ignored). Create the
+     subdir if it doesn't exist; the directory itself is the trust
+     declaration.
+3. Set `scopes = ["chat"]` for normal users, `["chat", "admin"]` for
+   a tenant-admin (sees their own tenant only), or `["chat", "admin",
+   "super_admin"]` for a server-wide admin who can manage all tenants.
+4. Reload: `sllm admin clients reload --server https://your-host` from
+   an admin-scoped client, or `kill -HUP <pid>` on the server.
+
+## Tenants (v1.2)
+
+Tenants partition every per-customer artifact: allowlist, models,
+LoRAs, sessions, audit log, rate-limit bucket. The wire never carries
+a tenant — the server derives it from the client's allowlist entry
+during the handshake.
+
+Directory layout:
+
+```
+data/keys/authorized_clients.toml                # default tenant
+data/keys/tenants/<tenant>/authorized_clients.toml
+data/models/                                     # default tenant
+data/models/tenants/<tenant>/
+data/loras/                                      # default tenant
+data/loras/tenants/<tenant>/
+```
+
+Tenant-admins (`scopes = ["chat", "admin"]`) only see their own
+tenant in `sessions/list`, `clients/list`, `models/*`, and `loras/*`.
+A `super_admin` can call `/v1/admin/tenants/list` to roll up every
+tenant's clients/sessions/models counts, and can terminate sessions
+across tenants.
+
+**Trust boundary caveat.** Tenant isolation is policy enforced by the
+server process. Anyone with root on the host (including the operator)
+can still read RAM or the at-rest age identity. Tenants that distrust
+the operator need separate instances or wait for the v2.0 TEE work.
+
+## LoRA adapters (v1.2)
+
+```
+sllm admin loras pull TheBloke/Mistral-7B-LoRA:my.lora.gguf \
+  --base-model Mistral-7B.Q4_K_M [--sha256 …]
+sllm admin loras list
+sllm admin loras apply Mistral-7B.Q4_K_M my-lora@0.8
+sllm admin loras rm my-lora
+```
+
+Adapters are SHA-verified at pull time and sealed with the server's
+age identity into `data/loras/.../<sha>.lora.gguf.age`. Applying a
+LoRA *reloads* the base model with the adapter (llama.cpp does not
+expose a true hot-swap), so plan max_loaded accordingly. Callers can
+also pin per-request via the SDK:
+
+```python
+client.chat.completions.create(
+    model="Mistral-7B.Q4_K_M",
+    messages=[{"role": "user", "content": "…"}],
+    loras=[{"id": "my-lora", "scale": 0.8}],
+)
+```
+
+Same LoRA set + base model = same cache slot. Different LoRA scales
+or different LoRAs = a fresh slot subject to LRU eviction.
 
 ## Pin the server
 

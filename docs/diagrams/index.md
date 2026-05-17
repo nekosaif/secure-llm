@@ -9,7 +9,7 @@ Each diagram ships in two forms:
 
 ## secure-llm — Component Map
 
-_End-to-end-encrypted LLM inference: client SDK ↔ TLS + AEAD envelope ↔ FastAPI server, with at-rest model encryption and decrypted-bytes-only-in-RAM_
+_End-to-end-encrypted LLM inference: client SDK ↔ TLS + AEAD envelope ↔ FastAPI server, with per-tenant model + LoRA storage and decrypted-bytes-only-in-RAM (v1.2)_
 
 ![secure-llm — Component Map](component-map.svg)
 
@@ -33,7 +33,7 @@ Open the interactive version: [`crypto-flow.html`](crypto-flow.html).
 
 ## secure-llm — Model Lifecycle
 
-_State machine + per-loaded internals: how a GGUF goes from absent → loaded → idle-offload_
+_State machine + per-loaded internals: how a (tenant, model, mode, LoRA-set) tuple goes from absent → loaded → idle-offload (v1.2)_
 
 ![secure-llm — Model Lifecycle](model-lifecycle.svg)
 

@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from collections.abc import Iterator
+from typing import TYPE_CHECKING, Any, Literal, overload
 
-from secure_llm_protocol.schemas import ChatCompletionRequest, ChatCompletionResponse
+from secure_llm_protocol.schemas import (
+    ChatCompletionChunk,
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+)
 
 if TYPE_CHECKING:
     from secure_llm_client.transport import Transport
@@ -35,12 +40,48 @@ class _Completions:
     def __init__(self, transport: Transport) -> None:
         self._t = transport
 
+    @overload
     def create(
-        self, *, model: str, messages: list[dict[str, str]], stream: bool = False, **sampling: Any
-    ) -> ChatCompletionResponse:
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        stream: Literal[False] = False,
+        **sampling: Any,
+    ) -> ChatCompletionResponse: ...
+
+    @overload
+    def create(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        stream: Literal[True],
+        **sampling: Any,
+    ) -> Iterator[ChatCompletionChunk]: ...
+
+    def create(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        stream: bool = False,
+        **sampling: Any,
+    ) -> ChatCompletionResponse | Iterator[ChatCompletionChunk]:
         req = ChatCompletionRequest.model_validate(
             {"model": model, "messages": messages, "stream": stream, **sampling}
         )
+        if stream:
+            raw_iter = self._t.stream_request(
+                "POST",
+                "/v1/chat/completions",
+                payload=req.model_dump(exclude_none=True),
+            )
+            return (
+                ChatCompletionChunk.model_validate(chunk)
+                for chunk in raw_iter
+                if "keepalive" not in chunk
+            )
         data = self._t.request(
             "POST", "/v1/chat/completions", payload=req.model_dump(exclude_none=True)
         )

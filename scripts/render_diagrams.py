@@ -239,32 +239,59 @@ COMPONENT_MAP = Diagram(
     slug="component-map",
     title="secure-llm — Component Map",
     subtitle="End-to-end-encrypted LLM inference: client SDK ↔ TLS + AEAD envelope ↔ FastAPI server, "
-              "with at-rest model encryption and decrypted-bytes-only-in-RAM",
+    "with per-tenant model + LoRA storage and decrypted-bytes-only-in-RAM (v1.2)",
     viewbox="0 0 1200 720",
     svg_body=COMPONENT_MAP_SVG,
     cards=[
-        ("cyan", "Client",
-         ["• sllm CLI (Typer + Rich)",
-          "• SecureLLMClient — OpenAI-shape SDK",
-          "• Transport: handshake on first call,",
-          "  envelope wrap/unwrap, replay protection",
-          "• known_hosts (SSH-style TOFU pinning)"]),
-        ("emerald", "Server",
-         ["• FastAPI + uvicorn (TLS 1.3)",
-          "• Middleware: req_id, rate_limit, size_limit",
-          "• Routers: session, models, chat,",
-          "  completions, system, debug, admin",
-          "• ModelManager: LRU + idle-offload,",
-          "  one inference worker per loaded model"]),
-        ("rose", "Confidentiality",
-         ["• X25519 ECDH (static + ephemeral)",
-          "• Ed25519 transcript signatures",
-          "• ChaCha20-Poly1305-IETF envelope",
-          "• AAD = method + path + session + counter",
-          "• age at-rest for *.gguf.age files",
-          "• decrypt → tmpfs → unlink-after-mmap"]),
+        (
+            "cyan",
+            "Client",
+            [
+                "• sllm CLI (Typer + Rich)",
+                "• SecureLLMClient — OpenAI-shape SDK",
+                "• Transport: handshake on first call,",
+                "  envelope wrap/unwrap, replay protection",
+                "• known_hosts (SSH-style TOFU pinning)",
+            ],
+        ),
+        (
+            "emerald",
+            "Server",
+            [
+                "• FastAPI + uvicorn (TLS 1.3)",
+                "• Middleware: req_id, rate_limit, size_limit",
+                "• Routers: session, models, chat,",
+                "  completions, system, debug, admin",
+                "• ModelManager: LRU + idle-offload,",
+                "  one inference worker per loaded model",
+            ],
+        ),
+        (
+            "rose",
+            "Confidentiality",
+            [
+                "• X25519 ECDH (static + ephemeral)",
+                "• Ed25519 transcript signatures",
+                "• ChaCha20-Poly1305-IETF envelope",
+                "• AAD = method + path + session + counter",
+                "• age at-rest for *.gguf.age files",
+                "• decrypt → tmpfs → unlink-after-mmap",
+            ],
+        ),
+        (
+            "violet",
+            "Tenants + LoRA (v1.2)",
+            [
+                "• AuthorizedClient.tenant (default + named)",
+                "• per-tenant data/{models,loras}/tenants/<t>/",
+                "• ModelManager._loaded keyed by",
+                "  (tenant, model_id, mode, lora-fp)",
+                "• super_admin scope for cross-tenant ops",
+                "• SSE streaming + /v1/embeddings (v1.1)",
+            ],
+        ),
     ],
-    footer="secure-llm 0.1.0 · protocol/1.0 · Apache-2.0",
+    footer="secure-llm · protocol/1.0 · v1.2 (LoRA + multi-tenant) · Apache-2.0",
 )
 
 
@@ -386,24 +413,39 @@ REQUEST_LIFECYCLE = Diagram(
     viewbox="0 0 1200 920",
     svg_body=REQUEST_LIFECYCLE_SVG,
     cards=[
-        ("rose", "Identity & auth",
-         ["• Client X25519 + Ed25519 (allowlist)",
-          "• Server X25519 + Ed25519 (TOFU-pinned)",
-          "• Ed25519 sig over handshake transcript",
-          "• Skew check ≤ 30 s",
-          "• Scopes & revocation flags"]),
-        ("violet", "Per-session keys",
-         ["• ikm = X25519(eph, eph) ‖ X25519(stat, stat)",
-          "• HKDF-SHA-256 → c2s_key, s2c_key",
-          "  + 4-byte nonce prefix per direction",
-          "• Live only in SessionManager (RAM)",
-          "• Zeroized on TTL or DELETE"]),
-        ("amber", "Envelope per call",
-         ["• AAD = method + path + session + counter",
-          "• Nonce = prefix ‖ counter (monotonic)",
-          "• ChaCha20-Poly1305-IETF",
-          "• 1024-bit sliding replay window",
-          "• Uniform ~200 ms latency floor on auth"]),
+        (
+            "rose",
+            "Identity & auth",
+            [
+                "• Client X25519 + Ed25519 (allowlist)",
+                "• Server X25519 + Ed25519 (TOFU-pinned)",
+                "• Ed25519 sig over handshake transcript",
+                "• Skew check ≤ 30 s",
+                "• Scopes & revocation flags",
+            ],
+        ),
+        (
+            "violet",
+            "Per-session keys",
+            [
+                "• ikm = X25519(eph, eph) ‖ X25519(stat, stat)",
+                "• HKDF-SHA-256 → c2s_key, s2c_key",
+                "  + 4-byte nonce prefix per direction",
+                "• Live only in SessionManager (RAM)",
+                "• Zeroized on TTL or DELETE",
+            ],
+        ),
+        (
+            "amber",
+            "Envelope per call",
+            [
+                "• AAD = method + path + session + counter",
+                "• Nonce = prefix ‖ counter (monotonic)",
+                "• ChaCha20-Poly1305-IETF",
+                "• 1024-bit sliding replay window",
+                "• Uniform ~200 ms latency floor on auth",
+            ],
+        ),
     ],
     footer="secure-llm · /v1/session is the only plaintext endpoint",
 )
@@ -541,27 +583,42 @@ CRYPTO_FLOW = Diagram(
     viewbox="0 0 1200 960",
     svg_body=CRYPTO_FLOW_SVG,
     cards=[
-        ("rose", "Identities (long-lived)",
-         ["• Client: X25519 + Ed25519 keypairs",
-          "• Server: X25519 + Ed25519 keypairs",
-          "• Server age identity (pyrage)",
-          "• File mode 0600 in data/keys/",
-          "• Client pubkeys in allowlist;",
-          "  server pubkey TOFU-pinned"]),
-        ("amber", "Key derivation",
-         ["• Ed25519 sig over full transcript",
-          "• dh1 = ephemeral × ephemeral (FS)",
-          "• dh2 = static × static (mutual auth)",
-          "• HKDF-SHA-256(ikm, transcript, info)",
-          "• → c2s/s2c keys + nonce prefixes",
-          "• Session keys never leave RAM"]),
-        ("violet", "On-the-wire envelope",
-         ["• ChaCha20-Poly1305-IETF",
-          "• Nonce = prefix(4) ‖ counter(8)",
-          "• AAD binds method + path + session",
-          "• 1024-bit sliding replay window",
-          "• AEAD failure → uniform error,",
-          "  ~200 ms latency floor"]),
+        (
+            "rose",
+            "Identities (long-lived)",
+            [
+                "• Client: X25519 + Ed25519 keypairs",
+                "• Server: X25519 + Ed25519 keypairs",
+                "• Server age identity (pyrage)",
+                "• File mode 0600 in data/keys/",
+                "• Client pubkeys in allowlist;",
+                "  server pubkey TOFU-pinned",
+            ],
+        ),
+        (
+            "amber",
+            "Key derivation",
+            [
+                "• Ed25519 sig over full transcript",
+                "• dh1 = ephemeral × ephemeral (FS)",
+                "• dh2 = static × static (mutual auth)",
+                "• HKDF-SHA-256(ikm, transcript, info)",
+                "• → c2s/s2c keys + nonce prefixes",
+                "• Session keys never leave RAM",
+            ],
+        ),
+        (
+            "violet",
+            "On-the-wire envelope",
+            [
+                "• ChaCha20-Poly1305-IETF",
+                "• Nonce = prefix(4) ‖ counter(8)",
+                "• AAD binds method + path + session",
+                "• 1024-bit sliding replay window",
+                "• AEAD failure → uniform error,",
+                "  ~200 ms latency floor",
+            ],
+        ),
     ],
     footer="See docs/protocol.md for the byte-for-byte spec",
 )
@@ -678,34 +735,55 @@ MODEL_LIFECYCLE_SVG = r"""
 <text x="80" y="698" fill="#94a3b8" font-size="9">• ensure_loaded() evicts the head of the OrderedDict when the cap is reached, before loading the new model.</text>
 <text x="80" y="714" fill="#94a3b8" font-size="9">• Eviction reason is emitted as a metric / log event; the evicted entry transitions present ◄── loaded.</text>
 <text x="80" y="730" fill="#fb7185" font-size="9">• Decrypted bytes are only ever in /dev/shm; on process exit the mmap is dropped and the bytes are gone.</text>
+
+<!-- v1.2 cache key callout -->
+<rect x="60" y="760" width="1100" height="40" rx="6" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+<text x="80" y="780" fill="white" font-size="11" font-weight="600">v1.2 cache key: (tenant, model_id, mode, lora-fp)</text>
+<text x="80" y="794" fill="#94a3b8" font-size="9">Changing LoRA set → reload into a fresh slot; same tuple → reuse. Per-tenant model + LoRA dirs are mounted by tenant_subdir().</text>
 """
 
 
 MODEL_LIFECYCLE = Diagram(
     slug="model-lifecycle",
     title="secure-llm — Model Lifecycle",
-    subtitle="State machine + per-loaded internals: how a GGUF goes from absent → loaded → idle-offload",
-    viewbox="0 0 1200 800",
+    subtitle="State machine + per-loaded internals: how a (tenant, model, mode, LoRA-set) tuple "
+    "goes from absent → loaded → idle-offload (v1.2)",
+    viewbox="0 0 1200 820",
     svg_body=MODEL_LIFECYCLE_SVG,
     cards=[
-        ("amber", "Disk → RAM (load)",
-         ["• Read *.gguf.age (age-encrypted)",
-          "• pyrage.decrypt → /dev/shm/<uuid>",
-          "• Llama(mmap-only) opens path",
-          "• os.unlink dentry immediately",
-          "• Bytes live in inode cache + mmap"]),
-        ("emerald", "Concurrency",
-         ["• One InferenceWorker per model",
-          "• Bounded asyncio.Queue",
-          "• Concurrent callers serialize",
-          "• Overflow → 503 + Retry-After",
-          "• llama_cpp.Llama isn't thread-safe"]),
-        ("violet", "Lifecycle controls",
-         ["• max_loaded (LRU cap, default 1)",
-          "• idle_timeout_seconds (default 300)",
-          "• Reset on each completed job",
-          "• admin.preload / admin.unload",
-          "• Graceful drain on shutdown"]),
+        (
+            "amber",
+            "Disk → RAM (load)",
+            [
+                "• Read *.gguf.age (age-encrypted)",
+                "• pyrage.decrypt → /dev/shm/<uuid>",
+                "• Stack each *.lora.gguf.age via ExitStack",
+                "• Llama(mmap-only) opens path + lora_path",
+                "• os.unlink each tmpfs file immediately",
+            ],
+        ),
+        (
+            "emerald",
+            "Concurrency",
+            [
+                "• One InferenceWorker per model",
+                "• Bounded asyncio.Queue",
+                "• Concurrent callers serialize",
+                "• Overflow → 503 + Retry-After",
+                "• llama_cpp.Llama isn't thread-safe",
+            ],
+        ),
+        (
+            "violet",
+            "Lifecycle controls",
+            [
+                "• max_loaded (LRU cap, default 1)",
+                "• idle_timeout_seconds (default 300)",
+                "• Reset on each completed job",
+                "• admin.preload / admin.unload",
+                "• Graceful drain on shutdown",
+            ],
+        ),
     ],
     footer="ModelManager: see server/secure_llm_server/models/manager.py",
 )
@@ -723,11 +801,13 @@ DIAGRAMS: list[Diagram] = [
 # Renderer
 # ---------------------------------------------------------------------------
 
+
 def render(diagram: Diagram, template: str) -> str:
     out = template
     # Title (head + h1 share the same placeholder)
-    out = out.replace("[PROJECT NAME] Architecture Diagram",
-                       f"{diagram.title} — Architecture Diagram")
+    out = out.replace(
+        "[PROJECT NAME] Architecture Diagram", f"{diagram.title} — Architecture Diagram"
+    )
     out = out.replace("[PROJECT NAME] Architecture", diagram.title)
     out = out.replace("[Subtitle description]", diagram.subtitle)
 
@@ -736,17 +816,17 @@ def render(diagram: Diagram, template: str) -> str:
     svg_open = re.compile(r'<svg viewBox="[^"]*">[\s\S]*?</svg>', re.MULTILINE)
     new_svg = (
         f'<svg viewBox="{diagram.viewbox}">\n'
-        f'        <defs>\n'
+        f"        <defs>\n"
         f'          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">\n'
         f'            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />\n'
-        f'          </marker>\n'
+        f"          </marker>\n"
         f'          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">\n'
         f'            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>\n'
-        f'          </pattern>\n'
-        f'        </defs>\n'
+        f"          </pattern>\n"
+        f"        </defs>\n"
         f'        <rect width="100%" height="100%" fill="url(#grid)" />\n'
-        f'{diagram.svg_body}\n'
-        f'      </svg>'
+        f"{diagram.svg_body}\n"
+        f"      </svg>"
     )
     out, n = svg_open.subn(new_svg, out, count=1)
     if n != 1:
@@ -770,7 +850,8 @@ def render(diagram: Diagram, template: str) -> str:
     cards_re = re.compile(r'<div class="cards">[\s\S]*?</div>\s*\n\s*<!-- Footer -->', re.MULTILINE)
     out, n = cards_re.subn(
         f'<div class="cards">\n{cards_block}\n    </div>\n\n    <!-- Footer -->',
-        out, count=1,
+        out,
+        count=1,
     )
     if n != 1:
         raise RuntimeError("could not splice cards block")
@@ -793,18 +874,18 @@ def render_svg(diagram: Diagram) -> str:
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{diagram.viewbox}" '
         f'font-family="JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace">\n'
-        f'  <defs>\n'
+        f"  <defs>\n"
         f'    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">\n'
         f'      <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>\n'
-        f'    </marker>\n'
+        f"    </marker>\n"
         f'    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">\n'
         f'      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>\n'
-        f'    </pattern>\n'
-        f'  </defs>\n'
+        f"    </pattern>\n"
+        f"  </defs>\n"
         f'  <rect width="100%" height="100%" fill="#020617"/>\n'
         f'  <rect width="100%" height="100%" fill="url(#grid)"/>\n'
-        f'{diagram.svg_body}\n'
-        f'</svg>\n'
+        f"{diagram.svg_body}\n"
+        f"</svg>\n"
     )
 
 
@@ -823,12 +904,17 @@ def main() -> int:
         print(f"wrote {svg_path}  ({len(svg)} bytes)")
 
     index = OUT_DIR / "index.md"
-    lines = ["# Architecture diagrams", "",
-              "Each diagram ships in two forms:", "",
-              "- **`<slug>.html`** — self-contained dark-themed page with a",
-              "  Copy / PNG / PDF export toolbar (open in any browser).",
-              "- **`<slug>.svg`** — standalone SVG for embedding in",
-              "  markdown / docs / slides (renders inline on GitHub).", ""]
+    lines = [
+        "# Architecture diagrams",
+        "",
+        "Each diagram ships in two forms:",
+        "",
+        "- **`<slug>.html`** — self-contained dark-themed page with a",
+        "  Copy / PNG / PDF export toolbar (open in any browser).",
+        "- **`<slug>.svg`** — standalone SVG for embedding in",
+        "  markdown / docs / slides (renders inline on GitHub).",
+        "",
+    ]
     for d in DIAGRAMS:
         lines.append(f"## {d.title}")
         lines.append("")
@@ -836,14 +922,11 @@ def main() -> int:
         lines.append("")
         lines.append(f"![{d.title}]({d.slug}.svg)")
         lines.append("")
-        lines.append(
-            f"Open the interactive version: [`{d.slug}.html`]({d.slug}.html)."
-        )
+        lines.append(f"Open the interactive version: [`{d.slug}.html`]({d.slug}.html).")
         lines.append("")
     lines.append("---")
     lines.append("")
-    lines.append("Regenerate with `make diagrams` (or "
-                 "`uv run python scripts/render_diagrams.py`).")
+    lines.append("Regenerate with `make diagrams` (or `uv run python scripts/render_diagrams.py`).")
     index.write_text("\n".join(lines), encoding="utf-8")
     print(f"wrote {index}")
     return 0

@@ -13,13 +13,23 @@ two disagree, the implementation wins and this doc gets updated.
 | `POST` | `/v1/models/list` | encrypted envelope |
 | `POST` | `/v1/models/download` | encrypted envelope |
 | `POST` | `/v1/models/remove` | encrypted envelope |
-| `POST` | `/v1/chat/completions` | encrypted envelope |
+| `POST` | `/v1/chat/completions` | encrypted envelope — SSE response when `stream=true` (v1.1) |
 | `POST` | `/v1/completions` | encrypted envelope |
+| `POST` | `/v1/embeddings` | encrypted envelope (v1.1) |
 | `POST` | `/v1/system` | encrypted envelope |
 | `POST` | `/v1/debug/{status,doctor,version,logs,errors}` | encrypted envelope |
 | `POST` | `/v1/admin/...` | encrypted envelope, requires `admin` scope |
+| `POST` | `/v1/admin/loras/{list,pull,rm,apply}` | encrypted envelope (v1.2) |
+| `POST` | `/v1/admin/tenants/list` | encrypted envelope, requires `super_admin` (v1.2) |
 | `GET` | `/healthz` `/readyz` | plain |
 | `GET` | `/metrics` | Prometheus, served on internal bind |
+
+**Tenant scoping (v1.2).** All envelope endpoints honor
+`session.tenant`, which the server derives from the client's allowlist
+entry during the handshake. The wire format does *not* carry a tenant
+field — claiming a tenant is impossible from the wire alone. Admin
+endpoints filter their view to the caller's tenant; cross-tenant ops
+require the `super_admin` scope.
 
 ## Handshake
 
@@ -81,8 +91,72 @@ renaming or removing one is a major bump.
 handshake's `protocol` field is checked first; mismatch produces
 `handshake_version_mismatch` and the session is not created.
 
-## Streaming (deferred to v1.1)
+## Streaming (v1.1)
 
-Server v1.0 returns `bad_request` if `stream=true`. v1.1 will add SSE
-with per-event envelopes sharing the session's s2c counter; keepalive
-frames are encrypted comments.
+When the client sets `stream=true` on `/v1/chat/completions`, the
+response is `Content-Type: text/event-stream`. Each `data:` line is a
+**base64-encoded application-layer envelope** sealed with the
+session's `s2c_key`. The envelope's counter shares the same monotonic
+`s2c_counter` as non-streaming responses, so the receiver's replay
+window catches duplicates regardless of which response path produced
+them. The AAD's `path` field is the request path
+(`/v1/chat/completions`), so an event captured here cannot be replayed
+against another endpoint.
+
+A keepalive every 15 seconds is emitted as a `data: …` event whose
+plaintext is `{"keepalive": true}` — never a raw SSE comment, so it
+still carries an envelope and a valid AAD. The stream terminates with
+the literal line `data: [DONE]` (the OpenAI convention; plaintext, no
+secret content).
+
+Server-side streaming runs inside the inference worker (not the router
+task), so the single-`Llama` invariant holds even mid-stream.
+Cancellation propagates from `request.is_disconnected()` to a
+`StreamHandle.cancel_event` checked between tokens — best-effort, not
+synchronous.
+
+## Embeddings (v1.1)
+
+`POST /v1/embeddings` with `EmbeddingsRequest { model, input: str |
+list[str] }` returns `EmbeddingsResponse { id, model, created, data:
+list[{embedding, index}], usage }`. The server caches the loaded model
+in a separate slot per `(model_id, "embedding")` so chat and embedding
+mode on the same base model don't collide.
+
+## LoRA adapters (v1.2)
+
+Adapters are sealed with the server's age identity into
+`data/loras/<sha>.lora.gguf.age` (or
+`data/loras/tenants/<tenant>/<sha>.lora.gguf.age`). The wire types
+are:
+
+- `LoraRef { id: str, scale: float }` — a single adapter pin.
+- `LoraInfo { id, repo_id, filename, sha256, bytes_on_disk,
+  base_model_id? }`.
+- `LoraDownloadRequest { repo_id, filename, sha256?, base_model_id? }`.
+- `LoraApplyRequest { base_model_id, loras: list[LoraRef], n_ctx? }`.
+
+`ChatCompletionRequest` and `CompletionRequest` carry an optional
+`loras: list[LoraRef]` field. Setting it picks (or transparently
+reloads into) a `(model, mode, lora-set)` slot. Cache eviction is
+LRU across all slots.
+
+## Tenants (v1.2)
+
+Tenants are *server-side* metadata derived from
+`AuthorizedClient.tenant` (loaded from
+`data/keys/authorized_clients.toml` or
+`data/keys/tenants/<tenant>/authorized_clients.toml`). The wire never
+carries a `tenant` field — claiming a tenant is impossible from the
+wire alone. Tenant context propagates through the session to:
+
+- `ModelManager._loaded` cache key (`(tenant, model_id, mode, lora-fp)`),
+- per-tenant `data/models/...` and `data/loras/...` directories,
+- rate-limit bucket key (`f"{tenant}:{client_fp}"`),
+- every audit event (`tenant=…` field),
+- every structlog log line via contextvars.
+
+The new `super_admin` scope is required for cross-tenant ops:
+`/v1/admin/tenants/list` returns 403 (`admin_required`) without it,
+and `/v1/admin/sessions/terminate` refuses to drop a session that
+isn't in the caller's tenant unless the caller is `super_admin`.

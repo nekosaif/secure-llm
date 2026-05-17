@@ -88,8 +88,8 @@ type: bootstrap ## mypy --strict
 .PHONY: sec
 sec: bootstrap ## pip-audit + bandit
 	$(call guard)
-	$(URUN) pip-audit --strict
-	$(URUN) bandit -r protocol server client -q
+	@bash scripts/sec_audit.sh
+	$(URUN) bandit -c pyproject.toml -r protocol server client -q
 
 .PHONY: fuzz
 fuzz: bootstrap ## short atheris run (CI runs long)
@@ -101,6 +101,23 @@ fuzz: bootstrap ## short atheris run (CI runs long)
 smoke: bootstrap-full ## full e2e: handshake -> chat -> idle-offload -> admin/debug
 	$(call guard)
 	$(URUN) python -m secure_llm_server.scripts_smoke
+
+.PHONY: smoke-v11
+smoke-v11: bootstrap ## v1.1: smoke + streaming + embeddings integration tests
+	$(call guard)
+	$(URUN) python -m secure_llm_server.scripts_smoke_v11
+	$(URUN) pytest -q server/tests/integration/test_chat_stream.py \
+	                  server/tests/integration/test_embeddings.py \
+	                  server/tests/unit/test_streaming.py
+
+.PHONY: smoke-v12
+smoke-v12: bootstrap ## v1.2: smoke + LoRA + multi-tenant isolation
+	$(call guard)
+	$(URUN) python -m secure_llm_server.scripts_smoke_v12
+	$(URUN) pytest -q server/tests/integration/test_chat_stream.py \
+	                  server/tests/integration/test_embeddings.py \
+	                  server/tests/integration/test_multi_tenant.py \
+	                  server/tests/unit/test_streaming.py
 
 .PHONY: crypto-soak
 crypto-soak: bootstrap ## 1M envelope roundtrips

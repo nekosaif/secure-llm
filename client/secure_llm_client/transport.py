@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import time
 import urllib.parse
+from collections.abc import Iterator
 from dataclasses import dataclass
 from threading import Lock
 from typing import Any
@@ -180,6 +181,75 @@ class Transport:
                     self._session = None
                 return self.request(method, path, payload=payload, retry_on_session_expired=False)
         return _decode_response(r, state, method=method, path=path, replay=self._replay)
+
+    def stream_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: dict[str, Any] | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        """SSE-streaming sibling of :meth:`request`.
+
+        Yields one decrypted JSON payload per ``data:`` line. Each envelope
+        carries a monotonic s2c counter, so the replay check is identical to
+        the non-streaming path. A trailing ``data: [DONE]`` ends iteration.
+        """
+        import base64
+
+        state = self._session_state()
+        sid = state.outcome.session_id
+        body = b"" if payload is None else _dump_json(payload).encode("utf-8")
+        with self._lock:
+            state.c2s_counter += 1
+            counter = state.c2s_counter
+        envelope = seal(
+            direction=state.outcome.c2s,
+            counter=counter,
+            session_id=sid,
+            method=method.upper(),
+            path=path,
+            plaintext=body,
+        )
+        with self._client.stream(
+            method,
+            path,
+            content=envelope,
+            headers={
+                "content-type": "application/octet-stream",
+                "accept": "text/event-stream",
+            },
+        ) as response:
+            if response.status_code != 200:
+                response.read()
+                _decode_response(response, state, method=method, path=path, replay=self._replay)
+                return  # _decode_response raises on errors
+
+            import json as _json
+
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                if line.startswith(":"):  # SSE comment / keepalive
+                    continue
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    return
+                try:
+                    raw_envelope = base64.b64decode(data, validate=True)
+                except Exception as e:
+                    raise SecureLLMError(f"bad SSE base64: {e}", code=ErrorCode.BAD_ENVELOPE) from e
+                env, plaintext = open_envelope(
+                    direction=state.outcome.s2c,
+                    expected_session_id=sid,
+                    method=method.upper(),
+                    path=path,
+                    body=raw_envelope,
+                )
+                self._replay.check(env.counter)
+                yield _json.loads(plaintext) if plaintext else {}
 
     def close(self) -> None:
         try:

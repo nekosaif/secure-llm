@@ -196,7 +196,7 @@
           <button class="toolbar-toggle" onclick="this.parentElement.classList.toggle('expanded')" title="Export options" aria-label="Export options">⋯</button>
         </div>
       </div>
-      <p class="subtitle">End-to-end-encrypted LLM inference: client SDK ↔ TLS + AEAD envelope ↔ FastAPI server, with at-rest model encryption and decrypted-bytes-only-in-RAM</p>
+      <p class="subtitle">End-to-end-encrypted LLM inference: client SDK ↔ TLS + AEAD envelope ↔ FastAPI server, with per-tenant model + LoRA storage and decrypted-bytes-only-in-RAM (v1.2)</p>
     </div>
 
     <!-- Main Diagram -->
@@ -456,11 +456,26 @@
           <li>• decrypt → tmpfs → unlink-after-mmap</li>
         </ul>
       </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot violet"></div>
+          <h3>Tenants + LoRA (v1.2)</h3>
+        </div>
+        <ul>
+          <li>• AuthorizedClient.tenant (default + named)</li>
+          <li>• per-tenant data/{models,loras}/tenants/<t>/</li>
+          <li>• ModelManager._loaded keyed by</li>
+          <li>• (tenant, model_id, mode, lora-fp)</li>
+          <li>• super_admin scope for cross-tenant ops</li>
+          <li>• SSE streaming + /v1/embeddings (v1.1)</li>
+        </ul>
+      </div>
     </div>
 
     <!-- Footer -->
     <p class="footer">
-      secure-llm 0.1.0 · protocol/1.0 · Apache-2.0
+      secure-llm · protocol/1.0 · v1.2 (LoRA + multi-tenant) · Apache-2.0
     </p>
   </div>
 

@@ -26,25 +26,46 @@ class LlamaBackend:
         n_gpu_layers: int,
         n_threads: int,
         seed: int | None = None,
+        embedding: bool = False,
+        lora_paths: tuple[tuple[Path, float], ...] = (),
     ) -> None:
         from llama_cpp import Llama  # local import — heavy
 
         t0 = time.monotonic()
+        # llama-cpp-python v1 only accepts a single ``lora_path`` + ``lora_scale``
+        # at construction (no public hot-swap). For now we stack at most one
+        # adapter; multi-LoRA composition lands when the binding exposes the
+        # multi-adapter API.
+        lora_kwargs: dict[str, Any] = {}
+        if lora_paths:
+            head_path, head_scale = lora_paths[0]
+            lora_kwargs["lora_path"] = str(head_path)
+            lora_kwargs["lora_scale"] = float(head_scale)
         self._llm = Llama(
             model_path=str(model_path),
             n_ctx=n_ctx,
             n_gpu_layers=n_gpu_layers,
             n_threads=(n_threads or None),
             seed=seed if seed is not None else 0xC0FFEE,
+            embedding=embedding,
             verbose=False,
+            **lora_kwargs,
         )
+        self._embedding = embedding
+        self._lora_paths = lora_paths
         _log.info(
             "backend.loaded",
             path=str(model_path),
             n_ctx=n_ctx,
             n_gpu_layers=n_gpu_layers,
+            embedding=embedding,
+            n_loras=len(lora_paths),
             load_seconds=round(time.monotonic() - t0, 3),
         )
+
+    @property
+    def embedding_mode(self) -> bool:
+        return self._embedding
 
     def chat(
         self,
@@ -57,6 +78,9 @@ class LlamaBackend:
 
     def complete(self, *, prompt: str, stream: bool, **sampling: Any) -> Any:
         return self._llm.create_completion(prompt=prompt, stream=stream, **sampling)
+
+    def embed(self, *, inputs: str | list[str]) -> Any:
+        return self._llm.create_embedding(input=inputs)
 
     def close(self) -> None:
         try:

@@ -1,4 +1,4 @@
-"""POST /v1/chat/completions (encrypted; non-streaming for v1)."""
+"""POST /v1/chat/completions (encrypted; non-streaming + SSE streaming)."""
 
 from __future__ import annotations
 
@@ -8,15 +8,16 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Request, Response
+from fastapi.responses import StreamingResponse
 
-from secure_llm_protocol.errors import ErrorCode
 from secure_llm_protocol.schemas import (
     ChatCompletionRequest,
     ChatCompletionResponse,
     ErrorEnvelope,
 )
+from secure_llm_server.llm.streaming import stream_chat_envelopes
 from secure_llm_server.metrics import inference_tokens_total
-from secure_llm_server.models.manager import ManagerError
+from secure_llm_server.models.manager import ManagerError, StreamHandle
 from secure_llm_server.routers._envelope_dep import (
     decrypt_request,
     encrypt_response,
@@ -47,27 +48,52 @@ def _sampling(req: ChatCompletionRequest) -> dict[str, Any]:
 async def chat_completions(request: Request) -> Response:
     state = request.app.state
     session, req = await decrypt_request(request, state.session_manager, ChatCompletionRequest)
-    if req.stream:
-        # SSE streaming is not implemented in v1 server; client falls back.
-        # Returning a clean error keeps the contract honest.
-        err = ErrorEnvelope(
-            code=ErrorCode.BAD_REQUEST,
-            message="streaming not implemented in v1; set stream=false",
-        )
-        body = encrypt_response(session, err, method=request.method, path=request.url.path)
-        return Response(status_code=400, content=body, media_type="application/octet-stream")
+    lora_spec = tuple((lr.id, lr.scale) for lr in req.loras)
     try:
         result = await state.models.chat(
             model_id=req.model,
             n_ctx=req.n_ctx,
             messages=[m.model_dump() for m in req.messages],
-            stream=False,
+            stream=req.stream,
+            loras=lora_spec,
+            tenant=session.tenant,
             **_sampling(req),
         )
     except ManagerError as e:
         err = ErrorEnvelope(code=e.code, message=str(e))
         body = encrypt_response(session, err, method=request.method, path=request.url.path)
         return Response(status_code=400, content=body, media_type="application/octet-stream")
+
+    if req.stream:
+        # `result` is a StreamHandle (async iterator) drained by the
+        # ModelManager's worker. Each chunk gets sealed into its own envelope
+        # sharing the session's s2c counter.
+        assert isinstance(result, StreamHandle)
+        handle: StreamHandle = result
+        method, path = request.method, request.url.path
+
+        async def _iter() -> Any:
+            try:
+                async for sse_bytes in stream_chat_envelopes(
+                    session=session,
+                    chunks=handle,
+                    method=method,
+                    path=path,
+                    model=req.model,
+                    cancel_event=handle.cancel_event,
+                    is_disconnected=None,
+                ):
+                    if await request.is_disconnected():
+                        handle.cancel()
+                    yield sse_bytes
+            finally:
+                handle.cancel()
+
+        return StreamingResponse(
+            _iter(),
+            media_type="text/event-stream",
+            headers={"cache-control": "no-store", "x-accel-buffering": "no"},
+        )
 
     # llama.cpp returns an OpenAI-shaped dict already.
     choice = result["choices"][0]

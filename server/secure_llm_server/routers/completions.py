@@ -57,6 +57,8 @@ async def completions(request: Request) -> Response:
             n_ctx=req.n_ctx,
             prompt=req.prompt,
             stream=False,
+            loras=tuple((lr.id, lr.scale) for lr in req.loras),
+            tenant=session.tenant,
             **_sampling(req),
         )
     except ManagerError as e:
