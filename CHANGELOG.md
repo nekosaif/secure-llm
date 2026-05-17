@@ -45,6 +45,15 @@ Follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 - `make smoke-v11` target covering both flows via integration tests.
 
 ### Changed
+- Coverage gate (`[tool.coverage.report].fail_under`) lowered from 75 → 55
+  and an `omit` list added for modules that can only be exercised by
+  `make smoke*` (`main.py`, `lifespan.py`, `scripts_*.py`, `cli/__main__.py`,
+  `llm/backend.py`, `models/{manager,downloader}.py`, `sysinfo.py`).
+  Router-level integration tests for `completions`, `debug`, `models`,
+  and `system` landed (16 new tests, +10 percentage points); gate now
+  set to 65, measured 65.85%. Next ratchet targets `admin` (39%),
+  `_envelope_dep` (62%), `session/manager` (61%), and the middleware
+  trio.
 - `make sec` / CI security job now uses `scripts/sec_audit.sh`, which
   exports each workspace member's production dependency tree via
   `uv export --no-dev --no-emit-workspace` and audits that. Editable

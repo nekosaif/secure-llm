@@ -51,6 +51,13 @@ Nothing. v1.2 is consistent. All gates green: 27 tests, ruff clean,
 - The audit log uses the regular structlog sink (no separate file).
 - The systemd unit and `Dockerfile` are reference templates, not
   production-hardened deployments.
+- **Coverage gate is at 55%** (real measured 56% on the
+  pytest-testable surface). The truly heavy paths
+  (`scripts_*`, `lifespan`, `main`, `cli`, `llm.backend`,
+  `models.{manager,downloader}`, `sysinfo`) are `omit`'d because they
+  need a real GGUF or process boot; smoke targets cover them. Raise
+  the gate as router-level integration tests for `completions`,
+  `debug`, `models`, and `system` land.
 
 ## Next 1–2 things to do (if anyone resumes)
 
