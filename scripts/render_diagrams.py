@@ -783,22 +783,67 @@ def render(diagram: Diagram, template: str) -> str:
     return out
 
 
+def render_svg(diagram: Diagram) -> str:
+    """Standalone SVG suitable for embedding in markdown (GitHub renders inline SVG).
+
+    Includes the xmlns declaration, the same defs (arrow marker + grid) the HTML
+    template uses, an opaque dark background so the dark theme survives on a
+    light page, and the per-diagram svg_body.
+    """
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{diagram.viewbox}" '
+        f'font-family="JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, monospace">\n'
+        f'  <defs>\n'
+        f'    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">\n'
+        f'      <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>\n'
+        f'    </marker>\n'
+        f'    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">\n'
+        f'      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>\n'
+        f'    </pattern>\n'
+        f'  </defs>\n'
+        f'  <rect width="100%" height="100%" fill="#020617"/>\n'
+        f'  <rect width="100%" height="100%" fill="url(#grid)"/>\n'
+        f'{diagram.svg_body}\n'
+        f'</svg>\n'
+    )
+
+
 def main() -> int:
     template = TEMPLATE.read_text(encoding="utf-8")
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     for d in DIAGRAMS:
         html = render(d, template)
-        out_path = OUT_DIR / f"{d.slug}.html"
-        out_path.write_text(html, encoding="utf-8")
-        print(f"wrote {out_path}  ({len(html)} bytes)")
+        html_path = OUT_DIR / f"{d.slug}.html"
+        html_path.write_text(html, encoding="utf-8")
+        print(f"wrote {html_path}  ({len(html)} bytes)")
+
+        svg = render_svg(d)
+        svg_path = OUT_DIR / f"{d.slug}.svg"
+        svg_path.write_text(svg, encoding="utf-8")
+        print(f"wrote {svg_path}  ({len(svg)} bytes)")
+
     index = OUT_DIR / "index.md"
     lines = ["# Architecture diagrams", "",
-              "Open any of these HTML files in a browser. Each has a built-in",
-              "Copy / PNG / PDF export toolbar (click the `⋯` in the header).", ""]
+              "Each diagram ships in two forms:", "",
+              "- **`<slug>.html`** — self-contained dark-themed page with a",
+              "  Copy / PNG / PDF export toolbar (open in any browser).",
+              "- **`<slug>.svg`** — standalone SVG for embedding in",
+              "  markdown / docs / slides (renders inline on GitHub).", ""]
     for d in DIAGRAMS:
-        lines.append(f"- [{d.title}]({d.slug}.html) — {d.subtitle}")
+        lines.append(f"## {d.title}")
+        lines.append("")
+        lines.append(f"_{d.subtitle}_")
+        lines.append("")
+        lines.append(f"![{d.title}]({d.slug}.svg)")
+        lines.append("")
+        lines.append(
+            f"Open the interactive version: [`{d.slug}.html`]({d.slug}.html)."
+        )
+        lines.append("")
+    lines.append("---")
     lines.append("")
-    lines.append("Regenerate with `uv run python scripts/render_diagrams.py`.")
+    lines.append("Regenerate with `make diagrams` (or "
+                 "`uv run python scripts/render_diagrams.py`).")
     index.write_text("\n".join(lines), encoding="utf-8")
     print(f"wrote {index}")
     return 0

@@ -93,17 +93,21 @@ channels in `llama.cpp` itself. Full STRIDE table:
 
 ## Architecture
 
-> 🎨 **Rendered architecture diagrams** are in [`docs/diagrams/`](docs/diagrams/index.md):
-> [component map](docs/diagrams/component-map.html) ·
-> [request lifecycle](docs/diagrams/request-lifecycle.html) ·
-> [cryptographic flow](docs/diagrams/crypto-flow.html) ·
-> [model lifecycle](docs/diagrams/model-lifecycle.html). Each is a single
-> self-contained HTML file with a dark theme and a Copy / PNG / PDF
-> export toolbar. Regenerate with `uv run python scripts/render_diagrams.py`.
-> The ASCII diagrams below are the textual equivalents that travel with
-> the source.
+> All four diagrams below are rendered SVGs from
+> [`docs/diagrams/`](docs/diagrams/index.md). Each is also available as a
+> self-contained HTML page with a Copy / PNG / PDF export toolbar — open
+> the linked `.html` next to each image. Regenerate everything with
+> `make diagrams`. ASCII fallbacks follow each image in case the SVG
+> doesn't render in your viewer.
 
 ### Component map
+
+![Component map](docs/diagrams/component-map.svg)
+
+Interactive: [`component-map.html`](docs/diagrams/component-map.html)
+
+<details>
+<summary>ASCII fallback</summary>
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -191,10 +195,16 @@ channels in `llama.cpp` itself. Full STRIDE table:
 │   └─ StatusBuilder                      ring-buffered                    │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
+</details>
 
 ### Request lifecycle
 
-A single end-to-end chat completion:
+![Request lifecycle](docs/diagrams/request-lifecycle.svg)
+
+Interactive: [`request-lifecycle.html`](docs/diagrams/request-lifecycle.html)
+
+<details>
+<summary>ASCII fallback — single end-to-end chat completion</summary>
 
 ```
 client                                    server
@@ -259,8 +269,16 @@ client                                    server
    open_envelope(s2c keys, method, path)
    pydantic parse → ChatCompletionResponse
 ```
+</details>
 
 ### Cryptographic flow
+
+![Cryptographic flow](docs/diagrams/crypto-flow.svg)
+
+Interactive: [`crypto-flow.html`](docs/diagrams/crypto-flow.html)
+
+<details>
+<summary>ASCII fallback</summary>
 
 ```
                                  ┌──────────────────────────────┐
@@ -333,6 +351,7 @@ AT-REST  (model files)
                                           bytes survive only in the mmap +
                                           page-cache; gone on process exit.
 ```
+</details>
 
 ### Wire format
 
@@ -352,6 +371,13 @@ Byte-for-byte spec: [`docs/protocol.md`](docs/protocol.md).
 
 ### Model lifecycle
 
+![Model lifecycle](docs/diagrams/model-lifecycle.svg)
+
+Interactive: [`model-lifecycle.html`](docs/diagrams/model-lifecycle.html)
+
+<details>
+<summary>ASCII fallback — state machine per model id</summary>
+
 ```
 state machine per model id:
 
@@ -370,6 +396,7 @@ state machine per model id:
                           │                             │
                           └── max_loaded LRU eviction ──┘
 ```
+</details>
 
 - `max_loaded = 1` (default; raise it if you have RAM/VRAM for more).
 - `idle_timeout_seconds = 300` (default; reset on every job).
