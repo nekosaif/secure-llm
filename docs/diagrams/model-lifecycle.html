@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>secure-llm — Model Lifecycle — Architecture Diagram</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'JetBrains Mono', monospace;
+      background: #020617;
+      min-height: 100vh;
+      padding: 2rem;
+      color: white;
+    }
+    
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    
+    .header {
+      margin-bottom: 2rem;
+    }
+    
+    .header-row {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 0.5rem;
+    }
+    
+    .pulse-dot {
+      width: 12px;
+      height: 12px;
+      background: #22d3ee;
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+    }
+    
+    .subtitle {
+      color: #94a3b8;
+      font-size: 0.875rem;
+      margin-left: 1.75rem;
+    }
+    
+    .diagram-container {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 1rem;
+      border: 1px solid #1e293b;
+      padding: 1.5rem;
+      overflow-x: auto;
+    }
+    
+    svg {
+      width: 100%;
+      min-width: 900px;
+      display: block;
+    }
+    
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+    
+    .card {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 0.75rem;
+      border: 1px solid #1e293b;
+      padding: 1.25rem;
+    }
+    
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+    
+    .card-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+    
+    .card-dot.cyan { background: #22d3ee; }
+    .card-dot.emerald { background: #34d399; }
+    .card-dot.violet { background: #a78bfa; }
+    .card-dot.amber { background: #fbbf24; }
+    .card-dot.rose { background: #fb7185; }
+    
+    .card h3 {
+      font-size: 0.875rem;
+      font-weight: 600;
+    }
+    
+    .card ul {
+      list-style: none;
+      color: #94a3b8;
+      font-size: 0.75rem;
+    }
+    
+    .card li {
+      margin-bottom: 0.375rem;
+    }
+    
+    .footer {
+      text-align: center;
+      margin-top: 1.5rem;
+      color: #475569;
+      font-size: 0.75rem;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 0.5rem;
+      margin-left: auto;
+      flex-shrink: 0;
+      align-items: center;
+    }
+    .toolbar-toggle {
+      background: transparent;
+      border: none;
+      color: #475569;
+      cursor: pointer;
+      font-size: 1.25rem;
+      line-height: 1;
+      padding: 0.25rem 0.5rem;
+      border-radius: 0.375rem;
+      transition: color 0.2s, background 0.2s;
+    }
+    .toolbar-toggle:hover { color: #94a3b8; background: rgba(30, 41, 59, 0.5); }
+    .toolbar-actions {
+      display: none;
+      gap: 0.5rem;
+    }
+    .toolbar.expanded .toolbar-actions { display: flex; }
+    .toolbar-actions button {
+      background: rgba(30, 41, 59, 0.8);
+      border: 1px solid #334155;
+      color: #94a3b8;
+      padding: 0.375rem 0.75rem;
+      border-radius: 0.375rem;
+      font-family: inherit;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .toolbar-actions button:hover {
+      background: rgba(51, 65, 85, 0.8);
+      color: white;
+      border-color: #475569;
+    }
+
+    @media print {
+      body { background: #020617; padding: 1rem; }
+      .toolbar { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container" id="report-container">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>secure-llm — Model Lifecycle</h1>
+        <div class="toolbar">
+          <div class="toolbar-actions">
+            <button onclick="copyAsImage(this)">📋 Copy</button>
+            <button onclick="downloadPNG(this)">🖼️ PNG</button>
+            <button onclick="downloadPDF(this)">📄 PDF</button>
+          </div>
+          <button class="toolbar-toggle" onclick="this.parentElement.classList.toggle('expanded')" title="Export options" aria-label="Export options">⋯</button>
+        </div>
+      </div>
+      <p class="subtitle">State machine + per-loaded internals: how a GGUF goes from absent → loaded → idle-offload</p>
+    </div>
+
+    <!-- Main Diagram -->
+    <div class="diagram-container">
+      <svg viewBox="0 0 1200 800">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+<!-- states -->
+<rect x="60" y="100" width="140" height="60" rx="6" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="130" y="124" fill="white" font-size="12" font-weight="600" text-anchor="middle">absent</text>
+<text x="130" y="142" fill="#94a3b8" font-size="9" text-anchor="middle">not on disk</text>
+
+<rect x="280" y="100" width="160" height="60" rx="6" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="360" y="124" fill="white" font-size="12" font-weight="600" text-anchor="middle">downloading</text>
+<text x="360" y="142" fill="#94a3b8" font-size="9" text-anchor="middle">HF + SHA-256 verify</text>
+
+<rect x="520" y="100" width="140" height="60" rx="6" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+<text x="590" y="124" fill="white" font-size="12" font-weight="600" text-anchor="middle">present</text>
+<text x="590" y="142" fill="#94a3b8" font-size="9" text-anchor="middle">*.gguf.age sealed</text>
+
+<rect x="740" y="100" width="160" height="60" rx="6" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="820" y="124" fill="white" font-size="12" font-weight="600" text-anchor="middle">loading</text>
+<text x="820" y="142" fill="#94a3b8" font-size="9" text-anchor="middle">decrypt → mmap → unlink</text>
+
+<rect x="980" y="100" width="160" height="60" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+<text x="1060" y="124" fill="white" font-size="12" font-weight="600" text-anchor="middle">loaded</text>
+<text x="1060" y="142" fill="#94a3b8" font-size="9" text-anchor="middle">serving inference</text>
+
+<rect x="740" y="240" width="160" height="60" rx="6" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="820" y="264" fill="white" font-size="12" font-weight="600" text-anchor="middle">unloading</text>
+<text x="820" y="282" fill="#94a3b8" font-size="9" text-anchor="middle">drain queue, drop Llama</text>
+
+<rect x="60" y="240" width="220" height="60" rx="6" fill="rgba(136, 19, 55, 0.4)" stroke="#fb7185" stroke-width="1.5"/>
+<text x="170" y="264" fill="white" font-size="12" font-weight="600" text-anchor="middle">error</text>
+<text x="170" y="282" fill="#94a3b8" font-size="9" text-anchor="middle">last_error surfaced via /v1/models</text>
+
+<!-- transitions -->
+<line x1="200" y1="130" x2="278" y2="130" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+<text x="239" y="120" fill="#fbbf24" font-size="9" text-anchor="middle">pull</text>
+
+<line x1="440" y1="130" x2="518" y2="130" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+<text x="479" y="120" fill="#a78bfa" font-size="9" text-anchor="middle">age encrypt</text>
+
+<line x1="660" y1="130" x2="738" y2="130" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+<text x="699" y="120" fill="#fbbf24" font-size="9" text-anchor="middle">first call</text>
+
+<line x1="900" y1="130" x2="978" y2="130" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+<text x="939" y="120" fill="#34d399" font-size="9" text-anchor="middle">ready</text>
+
+<line x1="1060" y1="160" x2="820" y2="238" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+<text x="975" y="195" fill="#94a3b8" font-size="9">idle / LRU evict</text>
+
+<line x1="740" y1="270" x2="660" y2="160" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+<text x="660" y="220" fill="#a78bfa" font-size="9">unloaded</text>
+
+<line x1="280" y1="240" x2="200" y2="160" stroke="#fb7185" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+<text x="222" y="210" fill="#fb7185" font-size="9">download fail / corrupt</text>
+
+<line x1="820" y1="160" x2="820" y2="238" stroke="#fb7185" stroke-width="1" stroke-dasharray="3,3" marker-end="url(#arrowhead)"/>
+<text x="833" y="200" fill="#fb7185" font-size="9">load fail</text>
+
+<!-- ============================================================
+     INTERNALS: Loaded[id]
+     ============================================================ -->
+<rect x="60" y="380" width="1100" height="220" rx="12" fill="rgba(6, 78, 59, 0.10)" stroke="#34d399" stroke-width="1" stroke-dasharray="6,6"/>
+<text x="80" y="402" fill="#34d399" font-size="11" font-weight="600">Internals — Loaded[id] (one per loaded model)</text>
+
+<rect x="100" y="430" width="220" height="140" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+<text x="210" y="454" fill="white" font-size="11" font-weight="600" text-anchor="middle">Llama instance</text>
+<text x="210" y="474" fill="#94a3b8" font-size="9" text-anchor="middle">llama_cpp.Llama</text>
+<text x="210" y="490" fill="#fb7185" font-size="9" text-anchor="middle">NOT thread-safe</text>
+<text x="210" y="510" fill="#94a3b8" font-size="9" text-anchor="middle">mmap-backed by</text>
+<text x="210" y="524" fill="#94a3b8" font-size="9" text-anchor="middle">/dev/shm/secure-llm/&lt;uuid&gt;</text>
+<text x="210" y="544" fill="#fbbf24" font-size="9" text-anchor="middle">tmpfs file already unlinked</text>
+
+<rect x="360" y="430" width="220" height="140" rx="6" fill="rgba(251, 146, 60, 0.30)" stroke="#fb923c" stroke-width="1.5"/>
+<text x="470" y="454" fill="white" font-size="11" font-weight="600" text-anchor="middle">asyncio.Queue</text>
+<text x="470" y="476" fill="#94a3b8" font-size="9" text-anchor="middle">maxsize = queue_depth_per_model</text>
+<text x="470" y="496" fill="#94a3b8" font-size="9" text-anchor="middle">FIFO of _Job{kind, payload,</text>
+<text x="470" y="510" fill="#94a3b8" font-size="9" text-anchor="middle">stream, future, cancel_event}</text>
+<text x="470" y="532" fill="#fb923c" font-size="9" text-anchor="middle">overflow → HTTP 503</text>
+<text x="470" y="546" fill="#fb923c" font-size="9" text-anchor="middle">+ Retry-After</text>
+
+<rect x="620" y="430" width="220" height="140" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+<text x="730" y="454" fill="white" font-size="11" font-weight="600" text-anchor="middle">InferenceWorker</text>
+<text x="730" y="476" fill="#94a3b8" font-size="9" text-anchor="middle">single asyncio.Task per model</text>
+<text x="730" y="496" fill="#94a3b8" font-size="9" text-anchor="middle">consumes queue, calls</text>
+<text x="730" y="510" fill="#94a3b8" font-size="9" text-anchor="middle">Llama.create_chat_completion</text>
+<text x="730" y="532" fill="#34d399" font-size="9" text-anchor="middle">serializes all callers; safe</text>
+<text x="730" y="546" fill="#34d399" font-size="9" text-anchor="middle">use of the un-shared backend</text>
+
+<rect x="880" y="430" width="240" height="140" rx="6" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="1000" y="454" fill="white" font-size="11" font-weight="600" text-anchor="middle">Idle timer</text>
+<text x="1000" y="476" fill="#94a3b8" font-size="9" text-anchor="middle">asyncio.TimerHandle</text>
+<text x="1000" y="490" fill="#94a3b8" font-size="9" text-anchor="middle">idle_timeout_seconds (300s)</text>
+<text x="1000" y="510" fill="#94a3b8" font-size="9" text-anchor="middle">reset on every job</text>
+<text x="1000" y="530" fill="#fbbf24" font-size="9" text-anchor="middle">on fire → graceful unload</text>
+<text x="1000" y="546" fill="#fbbf24" font-size="9" text-anchor="middle">→ gc + cuda.empty_cache</text>
+
+<line x1="320" y1="500" x2="358" y2="500" stroke="#fb923c" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+<line x1="580" y1="500" x2="618" y2="500" stroke="#fb923c" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+<line x1="840" y1="500" x2="878" y2="500" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrowhead)" stroke-dasharray="3,3"/>
+<text x="858" y="490" fill="#34d399" font-size="9" text-anchor="middle">touch</text>
+
+<!-- ============================================================
+     LRU + max_loaded note
+     ============================================================ -->
+<rect x="60" y="640" width="1100" height="100" rx="6" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+<text x="80" y="662" fill="white" font-size="11" font-weight="600">LRU eviction policy</text>
+<text x="80" y="682" fill="#94a3b8" font-size="9">• ModelManager keeps an OrderedDict[model_id, Loaded] capped at max_loaded (default 1).</text>
+<text x="80" y="698" fill="#94a3b8" font-size="9">• ensure_loaded() evicts the head of the OrderedDict when the cap is reached, before loading the new model.</text>
+<text x="80" y="714" fill="#94a3b8" font-size="9">• Eviction reason is emitted as a metric / log event; the evicted entry transitions present ◄── loaded.</text>
+<text x="80" y="730" fill="#fb7185" font-size="9">• Decrypted bytes are only ever in /dev/shm; on process exit the mmap is dropped and the bytes are gone.</text>
+
+      </svg>
+    </div>
+
+    <!-- Info Cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot amber"></div>
+          <h3>Disk → RAM (load)</h3>
+        </div>
+        <ul>
+          <li>• Read *.gguf.age (age-encrypted)</li>
+          <li>• pyrage.decrypt → /dev/shm/<uuid></li>
+          <li>• Llama(mmap-only) opens path</li>
+          <li>• os.unlink dentry immediately</li>
+          <li>• Bytes live in inode cache + mmap</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot emerald"></div>
+          <h3>Concurrency</h3>
+        </div>
+        <ul>
+          <li>• One InferenceWorker per model</li>
+          <li>• Bounded asyncio.Queue</li>
+          <li>• Concurrent callers serialize</li>
+          <li>• Overflow → 503 + Retry-After</li>
+          <li>• llama_cpp.Llama isn't thread-safe</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot violet"></div>
+          <h3>Lifecycle controls</h3>
+        </div>
+        <ul>
+          <li>• max_loaded (LRU cap, default 1)</li>
+          <li>• idle_timeout_seconds (default 300)</li>
+          <li>• Reset on each completed job</li>
+          <li>• admin.preload / admin.unload</li>
+          <li>• Graceful drain on shutdown</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <p class="footer">
+      ModelManager: see server/secure_llm_server/models/manager.py
+    </p>
+  </div>
+
+  <script>
+    async function copyAsImage(btn) {
+      const orig = btn.textContent;
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        btn.textContent = '✓ Copied!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+
+    async function downloadPNG(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const link = document.createElement('a');
+        link.download = 'diagram.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+        btn.textContent = '✓ Done!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+
+    async function downloadPDF(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const imgData = canvas.toDataURL('image/png');
+        const { jsPDF } = window.jspdf;
+        const orientation = canvas.width > canvas.height ? 'landscape' : 'portrait';
+        const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height], hotfixes: ['px_scaling'] });
+        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+        pdf.save('diagram.pdf');
+        btn.textContent = '✓ Done!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+  </script>
+</body>
+</html>

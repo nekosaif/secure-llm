@@ -119,6 +119,11 @@ agent-docs: ## regenerate CLAUDE.md and AGENTS.md from docs/_agent-context.md
 	$(call guard)
 	$(URUN) python scripts/render_agent_docs.py
 
+.PHONY: diagrams
+diagrams: ## render architecture diagrams to docs/diagrams/*.html
+	$(call guard)
+	$(URUN) python scripts/render_diagrams.py
+
 ##@ Container / release
 .PHONY: container
 container: ## build server container image
