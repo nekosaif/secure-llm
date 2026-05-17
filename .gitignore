@@ -1,0 +1,96 @@
+# --- Python ---------------------------------------------------------------
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+wheels/
+*.whl
+pip-wheel-metadata/
+
+# --- Test / cache / coverage ----------------------------------------------
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.benchmarks/
+.dmypy.json
+dmypy.json
+.tox/
+.nox/
+
+# --- secure-llm local state (NEVER commit) --------------------------------
+# bootstrap.sh writes everything here; safe to wipe with `make nuke`.
+data/
+logs/
+
+# Crypto material + downloaded model bytes — defense-in-depth in case
+# anyone deviates from the data/ layout.
+*.pem
+*.crt
+*.cer
+*.csr
+*.key
+*.key.pub
+*.x25519.key
+*.x25519.key.pub
+*.ed25519.key
+*.ed25519.key.pub
+server.age.key
+authorized_clients.toml
+known_servers.toml
+*.gguf
+*.gguf.age
+*.meta.json
+sbom.spdx.json
+
+# Server lifecycle state from `make run-bg`
+server.pid
+*.pid
+
+# Local-overrides config
+config.local.toml
+.env
+.env.*
+!.env.example
+
+# --- Editors / IDEs -------------------------------------------------------
+.idea/
+.vscode/
+*.code-workspace
+.cursor/
+*.swp
+*.swo
+*~
+.history/
+
+# --- OS -------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# --- Containers / CI artefacts --------------------------------------------
+.docker/
+.trivy/
+*.sbom.json
+*.attestation.json
+
+# --- Misc -----------------------------------------------------------------
+*.log
+*.tmp
+*.bak
+*.orig
+.scratch/

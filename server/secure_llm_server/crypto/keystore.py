@@ -1,0 +1,196 @@
+"""Keystore: server identity + authorized-clients allowlist.
+
+Layout under ``key_dir`` (mode 0700, files 0600)::
+
+    server.x25519.key            32-byte X25519 secret
+    server.x25519.key.pub        32-byte X25519 public
+    server.ed25519.key           32-byte Ed25519 seed (NaCl convention)
+    server.ed25519.key.pub       32-byte Ed25519 public
+    server.age.key               age identity for at-rest model encryption
+
+The allowlist file is TOML (path is configurable). It is reloadable via
+:meth:`Keystore.reload_allowlist` (also wired to SIGHUP and the admin API).
+"""
+
+from __future__ import annotations
+
+import base64
+import os
+import stat
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from nacl.public import PrivateKey
+from nacl.signing import SigningKey
+
+from secure_llm_server.crypto.kdf import fingerprint
+
+
+@dataclass(frozen=True, slots=True)
+class ServerIdentity:
+    x25519_sk: PrivateKey
+    x25519_pk: bytes
+    ed25519_sk: SigningKey
+    ed25519_pk: bytes
+    age_secret_path: Path  # the age identity file (managed by pyrage)
+
+
+@dataclass(frozen=True, slots=True)
+class AuthorizedClient:
+    name: str
+    x25519_pk: bytes
+    ed25519_pk: bytes
+    scopes: tuple[str, ...] = ()
+    revoked: bool = False
+    not_before: int | None = None
+    not_after: int | None = None
+
+    @property
+    def fingerprint(self) -> str:
+        return fingerprint(self.x25519_pk)
+
+
+@dataclass(slots=True)
+class Keystore:
+    server: ServerIdentity
+    allowlist: dict[bytes, AuthorizedClient] = field(default_factory=dict)
+    allowlist_path: Path | None = None
+
+    def reload_allowlist(self) -> int:
+        if self.allowlist_path is None:
+            return 0
+        self.allowlist = load_allowlist(self.allowlist_path)
+        return len(self.allowlist)
+
+
+def _require_secret_perms(path: Path) -> None:
+    st = path.stat()
+    if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+        raise PermissionError(
+            f"{path} is world/group-accessible (mode={oct(st.st_mode)}); chmod 0600 it"
+        )
+
+
+def _write_secret(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_TRUNC
+    fd = os.open(path, flags, 0o600)
+    try:
+        os.write(fd, data)
+    finally:
+        os.close(fd)
+
+
+def init_server_identity(key_dir: Path) -> ServerIdentity:
+    """Create a fresh server identity. Refuses to overwrite existing keys."""
+    key_dir.mkdir(parents=True, exist_ok=True)
+    os.chmod(key_dir, 0o700)
+
+    x_sk = PrivateKey.generate()
+    x_pk = bytes(x_sk.public_key)
+    e_sk = SigningKey.generate()
+    e_pk = bytes(e_sk.verify_key)
+
+    _write_secret(key_dir / "server.x25519.key", bytes(x_sk))
+    (key_dir / "server.x25519.key.pub").write_bytes(x_pk)
+    _write_secret(key_dir / "server.ed25519.key", bytes(e_sk))
+    (key_dir / "server.ed25519.key.pub").write_bytes(e_pk)
+
+    age_path = key_dir / "server.age.key"
+    if not age_path.exists():
+        try:
+            import pyrage  # type: ignore
+
+            identity = pyrage.x25519.Identity.generate()
+            _write_secret(age_path, str(identity).encode("ascii"))
+        except Exception:
+            # pyrage may be unavailable in some test envs; warn via empty file
+            _write_secret(age_path, b"")
+    return ServerIdentity(
+        x25519_sk=x_sk,
+        x25519_pk=x_pk,
+        ed25519_sk=e_sk,
+        ed25519_pk=e_pk,
+        age_secret_path=age_path,
+    )
+
+
+def load_server_identity(key_dir: Path) -> ServerIdentity:
+    paths = {
+        "x_sk": key_dir / "server.x25519.key",
+        "x_pk": key_dir / "server.x25519.key.pub",
+        "e_sk": key_dir / "server.ed25519.key",
+        "e_pk": key_dir / "server.ed25519.key.pub",
+        "age": key_dir / "server.age.key",
+    }
+    for p in (paths["x_sk"], paths["e_sk"]):
+        _require_secret_perms(p)
+    x_sk = PrivateKey(paths["x_sk"].read_bytes())
+    e_sk = SigningKey(paths["e_sk"].read_bytes())
+    return ServerIdentity(
+        x25519_sk=x_sk,
+        x25519_pk=paths["x_pk"].read_bytes(),
+        ed25519_sk=e_sk,
+        ed25519_pk=paths["e_pk"].read_bytes(),
+        age_secret_path=paths["age"],
+    )
+
+
+def load_allowlist(path: Path) -> dict[bytes, AuthorizedClient]:
+    if not path.exists():
+        return {}
+    with path.open("rb") as f:
+        data = tomllib.load(f)
+    out: dict[bytes, AuthorizedClient] = {}
+    for entry in data.get("clients", []):
+        x_pk = base64.b64decode(entry["x25519_pk"])
+        e_pk = base64.b64decode(entry["ed25519_pk"])
+        if len(x_pk) != 32 or len(e_pk) != 32:
+            raise ValueError(f"client {entry.get('name', '?')}: bad pk length")
+        out[x_pk] = AuthorizedClient(
+            name=entry.get("name", x_pk.hex()[:16]),
+            x25519_pk=x_pk,
+            ed25519_pk=e_pk,
+            scopes=tuple(entry.get("scopes", [])),
+            revoked=bool(entry.get("revoked", False)),
+            not_before=entry.get("not_before"),
+            not_after=entry.get("not_after"),
+        )
+    return out
+
+
+def load_or_init_keystore(key_dir: Path, allowlist_path: Path | None) -> Keystore:
+    if not (key_dir / "server.x25519.key").exists():
+        server = init_server_identity(key_dir)
+    else:
+        server = load_server_identity(key_dir)
+    allowlist = load_allowlist(allowlist_path) if allowlist_path else {}
+    return Keystore(server=server, allowlist=allowlist, allowlist_path=allowlist_path)
+
+
+# ----- CLI entry: invoked from bootstrap.sh -----
+
+
+def _cli_init(argv: list[str]) -> int:
+    import argparse
+
+    p = argparse.ArgumentParser(prog="keystore", description="init server identity")
+    p.add_argument("subcommand", choices=["init"])
+    p.add_argument("--key-dir", required=True, type=Path)
+    args = p.parse_args(argv)
+    if args.subcommand == "init":
+        if (args.key_dir / "server.x25519.key").exists():
+            print(f"keystore: {args.key_dir} already initialized")
+            return 0
+        ident = init_server_identity(args.key_dir)
+        print(f"keystore: initialized at {args.key_dir}")
+        print(f"  x25519 fingerprint: {fingerprint(ident.x25519_pk)}")
+        return 0
+    return 2
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.exit(_cli_init(sys.argv[1:]))

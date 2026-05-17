@@ -1,0 +1,47 @@
+[Unit]
+Description=secure-llm — end-to-end-encrypted LLM inference
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=secure-llm
+Group=secure-llm
+WorkingDirectory=/opt/secure-llm
+Environment=SECURE_LLM_CONFIG=/etc/secure-llm/config.toml
+ExecStart=/opt/secure-llm/.venv/bin/secure-llm-server --config /etc/secure-llm/config.toml
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=30
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes        # remove this line if you need GPU access
+PrivateUsers=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadWritePaths=/var/lib/secure-llm /var/log/secure-llm
+StateDirectory=secure-llm
+LogsDirectory=secure-llm
+# tmpfs for decrypted model bytes — never persists.
+RuntimeDirectory=secure-llm
+RuntimeDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target

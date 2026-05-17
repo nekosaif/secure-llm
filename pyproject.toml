@@ -1,0 +1,109 @@
+[project]
+name = "secure-llm"
+version = "0.1.0"
+description = "End-to-end-encrypted self-hosted LLM inference (workspace root)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+
+[tool.uv.workspace]
+members = ["protocol", "server", "client"]
+
+[tool.uv.sources]
+secure-llm-protocol = { workspace = true }
+secure-llm-server = { workspace = true }
+secure-llm-client = { workspace = true }
+
+[dependency-groups]
+dev = [
+  "pytest>=8",
+  "pytest-asyncio>=0.23",
+  "pytest-cov>=5",
+  "pytest-benchmark>=4",
+  "hypothesis>=6.100",
+  "ruff>=0.6",
+  "mypy>=1.10",
+  "pip-audit>=2.7",
+  "bandit>=1.7",
+  "types-psutil",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["protocol", "server", "client"]
+extend-exclude = [".venv", "dist", "build"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "C4", "RET", "SIM", "PL", "RUF"]
+ignore = [
+  "S101",    # asserts (used in tests)
+  "S108",    # /dev/shm literals are deliberate
+  "S110",    # try/except/pass in observability paths is deliberate
+  "S112",    # try/except/continue in registry-reload sweep is deliberate
+  "S603",    # subprocess call in the smoke harness is intentional
+  "PLR0913", # function arg count
+  "PLR0915", # too many statements
+  "PLC0415", # lazy local imports break import cycles + defer heavy deps
+  "PLW0108", # explicit lambda kept for readability
+  "PLW2901", # for-var overwrite intentional in path-resolve loop
+  "B008",    # typer.Option() in defaults is idiomatic
+  "SIM105",  # contextlib.suppress reads worse than try/except/pass here
+  "UP042",   # not switching to StrEnum mid-protocol
+  "PLR2004", # HTTP status / cipher constant sizes are well-known
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S", "PLR2004", "PLC0415"]
+"client/secure_llm_client/cli/__main__.py" = ["B008"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_any_generics = true
+files = ["protocol", "server", "client"]
+exclude = "(^|/)tests/"
+
+[[tool.mypy.overrides]]
+module = ["llama_cpp.*", "nacl.*", "pyrage.*", "pynvml.*", "huggingface_hub.*",
+          "tomli_w.*", "structlog.*"]
+ignore_missing_imports = true
+
+# Modules that wrap external C/Rust libraries with shifting APIs — strict mode
+# adds more noise than safety here.
+[[tool.mypy.overrides]]
+module = [
+  "secure_llm_server.sysinfo",
+  "secure_llm_server.scripts_pretty_log",
+  "secure_llm_server.scripts_smoke",
+  "secure_llm_server.llm.backend",
+  "secure_llm_server.models.downloader",
+  "secure_llm_server.logging",
+  "secure_llm_server.crypto.at_rest",
+  "secure_llm_server.crypto.keystore",
+  "client.secure_llm_client.known_hosts",
+  "secure_llm_client.known_hosts",
+]
+disable_error_code = ["misc", "import-untyped", "unused-ignore", "no-any-return",
+                       "list-item", "assignment", "call-overload", "arg-type"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers --strict-config"
+testpaths = ["server/tests", "client/tests"]
+asyncio_mode = "auto"
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+branch = true
+source = ["protocol", "server/secure_llm_server", "client/secure_llm_client"]
+
+[tool.coverage.report]
+exclude_also = [
+  "pragma: no cover",
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+]
+fail_under = 75
