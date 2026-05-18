@@ -52,6 +52,22 @@ See `Makefile` for the full target list; `make help` prints it.
 7. **Server stays stateless about conversation content** by default.
    `chat.clear` is a client-side reset of message history; the SDK doesn't
    ship a server-side persistent-conversation path.
+8. **SessionStore Protocol is the boundary** (v1.3). Never reach into
+   `_by_id` from a router; treat `SessionManager.lookup` as cache-only
+   (sync) and `lookup_async` as the rehydrating path that survives
+   federated failover. Redis (when enabled) is **inside** the trust
+   boundary — it stores AEAD direction keys. Never expose it to a
+   wider network and never log its contents.
+9. **Attestation userdata = `SHA-256(full_transcript)`** (v2.0). The
+   Ed25519 transcript signature is *independent* of the attestation
+   report — never sign different bytes when attestation is on vs off.
+   Never weaken the userdata binding; the report's whole value comes
+   from being non-detachable. `MockAttestationBackend` /
+   `MockAttestationVerifier` are CI-only — never ship in production.
+10. **Image content parts honor only `data:` URIs.** The router refuses
+    `https://` URLs in `ImageUrlPayload.url` so a malicious prompt
+    cannot trigger outbound egress (DNS / GET / SSRF). Never relax
+    this without an explicit, documented threat-model exception.
 
 ## Where things live
 

@@ -81,6 +81,27 @@ mmaps it.
   `tenant`; sessions, models, LoRAs, sessions/clients admin views, and
   audit events are scoped to their tenant. A `super_admin` scope sees
   across tenants; tenant-admins cannot.
+- **Federated routing** (v1.3) — `SessionStore` Protocol with
+  `InMemorySessionStore` (default) and `RedisSessionStore`. A fleet of
+  stateless servers behind one LB can fail over: instance B hydrates
+  a session created on instance A from Redis. AEAD direction keys,
+  replay watermark, counter, tenant and scopes all mirrored. Redis is
+  inside the trust boundary — see `docs/operator-guide.md` for the
+  required topology (SNI-passthrough LB, shared identity, private
+  Redis).
+- **TEE attestation foundation** (v2.0) — `AttestationBackend` /
+  `AttestationVerifier` Protocols, optional `attestation_report`
+  field on `HandshakeResponse` bound to `SHA-256(transcript)`,
+  `known_hosts.toml` extended with `measurement` and
+  `attestation_required`. Mock backend ships for CI; real
+  SEV-SNP / Nitro backends are stubbed until hardware integration
+  lands. Old clients still talk — every v2.0 schema change is
+  additive/optional.
+- **Multimodal content parts** (v2.0) — `ChatMessage.content` widened
+  to `str | list[ChatContentPart]` with OpenAI-shape text and
+  `image_url` parts. Only `data:` URIs are honored server-side (no
+  outbound egress via prompt). `MAX_REQUEST_BYTES` raised to 32 MiB
+  to fit small images.
 - **Debug + admin APIs** so operators can introspect status, recent
   errors, queue depth, log tail, and effective config — *over the same
   encrypted channel* — without shelling into the host.
@@ -96,11 +117,14 @@ mmaps it.
 on-disk attackers (encrypted model files, payload-redacted logs),
 backup/cold-storage compromise, replay attacks (sliding-window nonce
 protection + AAD-bound counters), stolen client keys (allowlist
-revocation). **Does not defend against**: root on the running server
-(plaintext is in RAM during inference — only a TEE solves that, which
-is out of scope), multi-tenant mutual distrust on one server, side
-channels in `llama.cpp` itself. Full STRIDE table:
-[`docs/threat-model.md`](docs/threat-model.md).
+revocation), detached or replayed TEE attestation reports (userdata
+bound to `SHA-256(transcript)`, v2.0). **Does not yet defend
+against**: root on the running server (plaintext is in RAM during
+inference — only a TEE solves that, v2.0 ships the protocol
+foundation; hardware backends are deferred), side channels in
+`llama.cpp` itself. Federated deployments treat the Redis broker as
+*inside* the trust boundary (it stores session keys). Full STRIDE
+table: [`docs/threat-model.md`](docs/threat-model.md).
 
 ---
 
@@ -880,10 +904,15 @@ queue_depth_per_model = 8
 max_tokens_hard_cap = 2048
 
 [limits]
-max_request_bytes = 8388608
+max_request_bytes = 33554432           # v2.0: 32 MiB (raised to fit small images)
 max_response_stream_bytes = 67108864
 rate_limit_rpm_per_client = 600
 slowloris_header_timeout_seconds = 10
+
+[federation]                           # v1.3 — optional, multi-instance deployments
+session_store = "memory"               # "memory" (default) | "redis"
+session_store_url = ""                 # required when session_store="redis"
+identity_replicated = false            # set true when every node shares one identity
 
 [observability]
 log_level = "INFO"
@@ -981,9 +1010,16 @@ Single-host, single-tenant by design. Throughput is bounded by
   isn't pinned by default; set `CMAKE_ARGS="-DLLAMA_CUBLAS=on"` and
   re-run `uv sync`.
 
-To horizontally scale, run multiple servers and round-robin at the
-load balancer. Each instance carries its own keystore — clients
-TOFU-pin per host.
+To horizontally scale (v1.3), run multiple servers behind a
+SNI-passthrough LB with `[federation].session_store = "redis"` set on
+every node. All instances share **one** X25519/Ed25519 server
+identity (copy the key files from the first node — clients pin one
+public key for the whole fleet). Failover is supported; for the best
+UX prefer session-affinity routing so failover is the exception, not
+the norm. See "Federation" in
+[`docs/operator-guide.md`](docs/operator-guide.md) and the
+two-instance failover tests in
+[`server/tests/unit/test_federation.py`](server/tests/unit/test_federation.py).
 
 ---
 
@@ -1031,24 +1067,37 @@ Review before deploying.
 
 ## Out of scope (current)
 
-- **Confidential computing / TEE.** Plaintext is in RAM during
-  inference. Only a TEE defends against an attacker with root on the
-  server. Planned for v2.0.
-- **Multi-tenant *mutual distrust*.** Per-tenant allowlist + storage
-  scoping landed in v1.2, so cooperating tenants on one server are
-  isolated by policy. The server operator is still inside the trust
-  boundary, however; tenants that distrust the operator (not just each
-  other) need separate instances. A TEE would close that gap.
+- **Confidential computing / TEE — hardware backends.** v2.0 ships
+  the protocol foundation: `AttestationBackend` Protocol on the
+  server, `AttestationVerifier` on the client, optional
+  `attestation_report` field on `HandshakeResponse` bound to
+  `SHA-256(transcript)`, `known_hosts.toml` extended with
+  `measurement` and `attestation_required`. The Mock backend works
+  end-to-end in CI; `SevSnpBackend` and `NitroEnclaveBackend` are
+  stubbed (`NotImplementedError`) until a SEV-SNP host and the
+  `server/deploy/sev-snp/` Terraform land.
+- **Multi-tenant *mutual distrust* with operator.** Per-tenant
+  allowlist + storage scoping landed in v1.2, so cooperating tenants
+  on one server are isolated by policy. The server operator is still
+  inside the trust boundary; tenants that distrust the operator
+  (not just each other) need separate instances or a real TEE
+  deployment (when SEV-SNP integration lands).
+- **Multimodal — live model integration.** v2.0 ships the schema
+  (`ChatContentPart` union, image_url with `data:` URI), the wire
+  size raised to 32 MiB, and the `clip_model_path` plumbing on
+  `LlamaBackend`. The end-to-end Llava integration test against a
+  real GGUF is deferred until we check one in.
+- **Audio transcription.** Planned `/v1/audio/transcriptions` +
+  whisper-cpp not yet implemented.
 - **Fine-tuning** — different product. Inference + LoRA hot-swap only.
-- **Image / audio modalities** — planned for v2.0.
-- **Federated routing / load balancing across servers** — planned for
-  v1.3 (shared session store + identity replication).
 
 Shipped since v1.0: **SSE streaming** + **embeddings** (v1.1),
-**LoRA hot-swap** + **multi-tenant** (v1.2).
+**LoRA hot-swap** + **multi-tenant** (v1.2), **federated routing**
+(v1.3), **TEE-attestation foundation** + **multimodal content parts**
+(v2.0).
 
 If you need any of the remaining items, open an issue with the use case
-or follow [`PLAN.md`](PLAN.md) — the v1.3 / v2.0 roadmap lives there.
+or follow [`PLAN.md`](PLAN.md) — the v2.0+ roadmap lives there.
 
 ---
 

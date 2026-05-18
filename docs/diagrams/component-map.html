@@ -196,7 +196,7 @@
           <button class="toolbar-toggle" onclick="this.parentElement.classList.toggle('expanded')" title="Export options" aria-label="Export options">⋯</button>
         </div>
       </div>
-      <p class="subtitle">End-to-end-encrypted LLM inference: client SDK ↔ TLS + AEAD envelope ↔ FastAPI server, with per-tenant model + LoRA storage and decrypted-bytes-only-in-RAM (v1.2)</p>
+      <p class="subtitle">End-to-end-encrypted LLM inference: client SDK ↔ TLS + AEAD envelope ↔ FastAPI server, with per-tenant model + LoRA storage, federated session state, and TEE-attestable handshake (v2.0)</p>
     </div>
 
     <!-- Main Diagram -->
@@ -471,11 +471,27 @@
           <li>• SSE streaming + /v1/embeddings (v1.1)</li>
         </ul>
       </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot amber"></div>
+          <h3>Federation + TEE (v1.3 + v2.0)</h3>
+        </div>
+        <ul>
+          <li>• SessionStore Protocol</li>
+          <li>• InMemory (default) | Redis-backed</li>
+          <li>• Shared identity across fleet,</li>
+          <li>• SNI-passthrough LB, failover via hydrate</li>
+          <li>• AttestationBackend + Verifier (Mock/None,</li>
+          <li>• SEV-SNP/Nitro stubs)</li>
+          <li>• Multimodal ChatContentPart (text+image_url)</li>
+        </ul>
+      </div>
     </div>
 
     <!-- Footer -->
     <p class="footer">
-      secure-llm · protocol/1.0 · v1.2 (LoRA + multi-tenant) · Apache-2.0
+      secure-llm · protocol/1.0 · v2.0 foundation (TEE attestation + multimodal + federation) · Apache-2.0
     </p>
   </div>
 

@@ -24,9 +24,7 @@ from secure_llm_server.crypto.attestation import MockAttestationBackend, NoneBac
 from ._helpers import build_app
 
 
-def _make_transport(
-    app, keystore, tmp_path: Path, **kwargs
-) -> Transport:
+def _make_transport(app, keystore, tmp_path: Path, **kwargs) -> Transport:
     identity = ClientIdentity.load(tmp_path / "client")
     base = "http://testserver"
     t = Transport(

@@ -95,8 +95,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.federation.session_store == "redis":
         if not settings.federation.session_store_url:
             raise RuntimeError(
-                "[federation].session_store='redis' requires "
-                "[federation].session_store_url"
+                "[federation].session_store='redis' requires [federation].session_store_url"
             )
         from secure_llm_server.session.redis_store import build_redis_session_store
 

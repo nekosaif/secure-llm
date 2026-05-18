@@ -189,8 +189,7 @@ def derive_session(
             from secure_llm_client.errors import ServerKeyMismatch
 
             raise ServerKeyMismatch(
-                "server attached an attestation report but no verifier "
-                "is configured client-side"
+                "server attached an attestation report but no verifier is configured client-side"
             )
         blob = _b64d(response.attestation_report)
         try:

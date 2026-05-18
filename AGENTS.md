@@ -36,18 +36,27 @@ global Python. `make help` lists every target.
    (`server/secure_llm_server/logging.py`). Don't print prompts/messages.
 6. Admin endpoints gate on the `admin` scope via `_require_admin`. Don't
    skip this on new admin routes.
+7. `SessionStore` Protocol is the boundary (v1.3). Use
+   `SessionManager.lookup` (sync, cache) or `lookup_async` (federated
+   rehydrate); never reach into `_by_id`. Redis is *inside* the trust
+   boundary — never expose it or log its contents.
+8. Attestation userdata = `SHA-256(full_transcript)` (v2.0). Ed25519
+   transcript sig is independent of attestation; never weaken the
+   userdata binding. `Mock*` backend/verifier are CI-only.
+9. Image content parts (v2.0) honor only `data:` URIs; never silently
+   follow `https://`. Refuse outbound egress from prompts.
 
 ## Tree
 
 ```
-protocol/                    shared wire schemas
+protocol/                    shared wire schemas (incl. ChatContentPart, attestation_report)
 server/secure_llm_server/
-  crypto/                    handshake, envelope, replay, keystore, at-rest
-  session/                   in-memory session table
+  crypto/                    handshake, envelope, replay, keystore, at-rest, attestation
+  session/                   session manager + store (InMemory | Redis)
   models/                    manager, downloader, registry, inference worker
   routers/                   FastAPI endpoints
   observability/             ring log, errors, status snapshot
-client/secure_llm_client/    SDK + sllm CLI
+client/secure_llm_client/    SDK + sllm CLI (incl. crypto/attestation verifier)
 docs/                        threat model, protocol, operator guide, runbook
 ```
 

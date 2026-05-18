@@ -379,11 +379,28 @@
           <li>• ~200 ms latency floor</li>
         </ul>
       </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot cyan"></div>
+          <h3>TEE attestation (v2.0)</h3>
+        </div>
+        <ul>
+          <li>• Optional attestation_report on handshake</li>
+          <li>• userdata = SHA-256(full transcript)</li>
+          <li>• — binds report to *this* handshake</li>
+          <li>• Backends: None | Mock | SEV-SNP (stub)</li>
+          <li>• | Nitro (stub)</li>
+          <li>• Client pins `measurement` in</li>
+          <li>• known_hosts.toml; attestation_required</li>
+          <li>• fails closed when omitted</li>
+        </ul>
+      </div>
     </div>
 
     <!-- Footer -->
     <p class="footer">
-      See docs/protocol.md for the byte-for-byte spec
+      See docs/protocol.md for the byte-for-byte spec · v2.0 foundation
     </p>
   </div>
 

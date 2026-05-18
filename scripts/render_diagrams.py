@@ -239,7 +239,7 @@ COMPONENT_MAP = Diagram(
     slug="component-map",
     title="secure-llm — Component Map",
     subtitle="End-to-end-encrypted LLM inference: client SDK ↔ TLS + AEAD envelope ↔ FastAPI server, "
-    "with per-tenant model + LoRA storage and decrypted-bytes-only-in-RAM (v1.2)",
+    "with per-tenant model + LoRA storage, federated session state, and TEE-attestable handshake (v2.0)",
     viewbox="0 0 1200 720",
     svg_body=COMPONENT_MAP_SVG,
     cards=[
@@ -290,8 +290,21 @@ COMPONENT_MAP = Diagram(
                 "• SSE streaming + /v1/embeddings (v1.1)",
             ],
         ),
+        (
+            "amber",
+            "Federation + TEE (v1.3 + v2.0)",
+            [
+                "• SessionStore Protocol",
+                "  InMemory (default) | Redis-backed",
+                "• Shared identity across fleet,",
+                "  SNI-passthrough LB, failover via hydrate",
+                "• AttestationBackend + Verifier (Mock/None,",
+                "  SEV-SNP/Nitro stubs)",
+                "• Multimodal ChatContentPart (text+image_url)",
+            ],
+        ),
     ],
-    footer="secure-llm · protocol/1.0 · v1.2 (LoRA + multi-tenant) · Apache-2.0",
+    footer="secure-llm · protocol/1.0 · v2.0 foundation (TEE attestation + multimodal + federation) · Apache-2.0",
 )
 
 
@@ -619,8 +632,22 @@ CRYPTO_FLOW = Diagram(
                 "  ~200 ms latency floor",
             ],
         ),
+        (
+            "cyan",
+            "TEE attestation (v2.0)",
+            [
+                "• Optional attestation_report on handshake",
+                "• userdata = SHA-256(full transcript)",
+                "  — binds report to *this* handshake",
+                "• Backends: None | Mock | SEV-SNP (stub)",
+                "  | Nitro (stub)",
+                "• Client pins `measurement` in",
+                "  known_hosts.toml; attestation_required",
+                "  fails closed when omitted",
+            ],
+        ),
     ],
-    footer="See docs/protocol.md for the byte-for-byte spec",
+    footer="See docs/protocol.md for the byte-for-byte spec · v2.0 foundation",
 )
 
 

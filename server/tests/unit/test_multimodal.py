@@ -48,16 +48,12 @@ def test_chat_message_accepts_mixed_text_and_image_parts():
 
 def test_chat_message_rejects_unknown_part_type():
     with pytest.raises(ValidationError):
-        ChatMessage.model_validate(
-            {"role": "user", "content": [{"type": "audio", "audio": "x"}]}
-        )
+        ChatMessage.model_validate({"role": "user", "content": [{"type": "audio", "audio": "x"}]})
 
 
 def test_chat_message_rejects_part_without_type():
     with pytest.raises(ValidationError):
-        ChatMessage.model_validate(
-            {"role": "user", "content": [{"text": "hi"}]}
-        )
+        ChatMessage.model_validate({"role": "user", "content": [{"text": "hi"}]})
 
 
 def test_image_url_payload_detail_defaults_to_auto():

@@ -9,7 +9,7 @@ Each diagram ships in two forms:
 
 ## secure-llm — Component Map
 
-_End-to-end-encrypted LLM inference: client SDK ↔ TLS + AEAD envelope ↔ FastAPI server, with per-tenant model + LoRA storage and decrypted-bytes-only-in-RAM (v1.2)_
+_End-to-end-encrypted LLM inference: client SDK ↔ TLS + AEAD envelope ↔ FastAPI server, with per-tenant model + LoRA storage, federated session state, and TEE-attestable handshake (v2.0)_
 
 ![secure-llm — Component Map](component-map.svg)
 
