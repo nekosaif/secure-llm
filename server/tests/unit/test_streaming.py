@@ -120,6 +120,71 @@ def test_stream_wrong_path_fails():
         )
 
 
+def test_stream_keepalive_emitted_when_no_chunks(monkeypatch):
+    """When the chunk iterator stalls, the encoder emits a keepalive
+    envelope on the keepalive interval instead of holding the stream open.
+    """
+    import secure_llm_server.llm.streaming as streaming_mod
+
+    # Squash the keepalive interval to ~0 so we can race-finish quickly.
+    monkeypatch.setattr(streaming_mod, "_SSE_KEEPALIVE_SECONDS", 0.05)
+
+    session = _make_session()
+
+    class _SlowIter:
+        """Async iterator: blocks long enough that the keepalive fires."""
+
+        def __init__(self) -> None:
+            self._done = False
+
+        def __aiter__(self) -> _SlowIter:
+            return self
+
+        async def __anext__(self) -> dict[str, Any]:
+            if not self._done:
+                self._done = True
+                # Block well past the keepalive interval, then emit one
+                # real chunk so iteration progresses.
+                await asyncio.sleep(0.2)
+                return {
+                    "choices": [{"index": 0, "delta": {"content": "ping"}, "finish_reason": None}]
+                }
+            raise StopAsyncIteration
+
+    async def run() -> list[bytes]:
+        gen = streaming_mod.stream_chat_envelopes(
+            session=session,
+            chunks=_SlowIter(),
+            method="POST",
+            path="/v1/chat/completions",
+            model="m",
+        )
+        return await _collect(gen)
+
+    frames = asyncio.run(run())
+    assert frames[-1] == _SSE_END_MARKER
+    # Decode every non-terminator frame; at least one must be a keepalive.
+    import base64
+    import json
+
+    from secure_llm_server.crypto.envelope import open_envelope
+
+    saw_keepalive = False
+    for f in frames[:-1]:
+        env_bytes = base64.b64decode(f[len(b"data: ") :].rstrip(b"\n"))
+        _, plaintext = open_envelope(
+            direction=session.s2c,
+            expected_session_id=session.session_id,
+            method="POST",
+            path="/v1/chat/completions",
+            body=env_bytes,
+        )
+        if plaintext and json.loads(plaintext).get("keepalive"):
+            saw_keepalive = True
+            break
+    assert saw_keepalive, "expected at least one keepalive envelope"
+
+
 def test_stream_cancel_stops_early():
     """If cancel_event is set, no further chunks are emitted (only the terminator)."""
     session = _make_session()

@@ -24,9 +24,9 @@ current shapes):
 ## Phasing
 
 ```
-v1.1   Streaming + Embeddings              ~1–2 sprints
-v1.2   LoRA hot-swap + Multi-tenant        ~2–3 sprints
-v1.3   Federated routing                   ~1 sprint
+v1.1   Streaming + Embeddings              ~1–2 sprints   DONE
+v1.2   LoRA hot-swap + Multi-tenant        ~2–3 sprints   DONE
+v1.3   Federated routing                   ~1 sprint      DONE (2026-05-18)
 v2.0   TEE attestation + Multimodal        ~3–6 months
 ```
 

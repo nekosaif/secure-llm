@@ -122,6 +122,12 @@ class Transport:
             response=HandshakeResponse.model_validate_json(r.content),
             pinned_server_static_pk=self._pinned,
         )
+        # Each handshake yields fresh keys + a fresh s2c counter starting at
+        # 0 — so the *server* replay window resets implicitly. The client's
+        # own watch on s2c counters must reset too, otherwise the next
+        # response's counter=1 collides with the previous session's
+        # counter=1 and gets rejected as a (false) replay.
+        self._replay = _ReplayClient()
         return _SessionState(outcome=outcome, c2s_counter=0, last_replay_high=0)
 
     def _session_state(self) -> _SessionState:
@@ -139,7 +145,9 @@ class Transport:
             try:
                 import base64
 
-                self._client.delete(f"/v1/session/{base64.b64encode(sid).decode('ascii')}")
+                # URL-safe base64 keeps the session_id inside a single path
+                # segment (standard b64 can contain '/').
+                self._client.delete(f"/v1/session/{base64.urlsafe_b64encode(sid).decode('ascii')}")
             except Exception:
                 pass
 

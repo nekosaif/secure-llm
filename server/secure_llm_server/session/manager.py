@@ -1,4 +1,15 @@
-"""In-memory session table. Keys live in RAM only; no disk persistence."""
+"""In-memory or federated session table.
+
+The default backend (``InMemorySessionStore``) keeps session keys in
+RAM only — no disk persistence. With ``[federation].session_store =
+"redis"`` configured, ``RedisSessionStore`` mirrors session state into
+Redis so a stateless fleet of servers behind one LB can serve a
+session even if the original instance dies.
+
+In every case the AEAD direction keys live in RAM (or in Redis under
+the same trust boundary as the server). They are never written to
+disk on the server itself.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +21,7 @@ from dataclasses import dataclass, field
 from secure_llm_server.crypto.envelope import DirectionKeys
 from secure_llm_server.crypto.handshake import SessionMaterial
 from secure_llm_server.crypto.replay import ReplayWindow
+from secure_llm_server.session.store import InMemorySessionStore, SessionStore
 
 
 @dataclass(slots=True)
@@ -48,11 +60,27 @@ class Session:
 
 
 class SessionManager:
-    def __init__(self, *, ttl_seconds: int, max_lifetime_seconds: int) -> None:
+    """Public session API. Thin wrapper over a :class:`SessionStore`.
+
+    The default store is :class:`InMemorySessionStore`. To enable
+    federated state, pass a :class:`RedisSessionStore` instance.
+    """
+
+    def __init__(
+        self,
+        *,
+        ttl_seconds: int,
+        max_lifetime_seconds: int,
+        store: SessionStore | None = None,
+    ) -> None:
         self._ttl = ttl_seconds
         self._max_life = max_lifetime_seconds
-        self._by_id: dict[bytes, Session] = {}
+        self._store: SessionStore = store if store is not None else InMemorySessionStore()
         self._lock = asyncio.Lock()
+
+    @property
+    def store(self) -> SessionStore:
+        return self._store
 
     async def create(self, material: SessionMaterial) -> Session:
         now = time.time()
@@ -69,39 +97,59 @@ class SessionManager:
             tenant=material.tenant,
         )
         async with self._lock:
-            self._by_id[sess.session_id] = sess
+            await self._store.put(sess)
         return sess
 
     def lookup(self, session_id: bytes) -> Session | None:
-        sess = self._by_id.get(session_id)
+        """Synchronous cache-only lookup. Returns ``None`` on miss.
+
+        For federated setups, prefer :meth:`lookup_async` so the
+        backing store can rehydrate after a failover.
+        """
+        return self._store.lookup(session_id)
+
+    async def lookup_async(self, session_id: bytes) -> Session | None:
+        """Like :meth:`lookup`, but falls back to the backing store on
+        local-cache miss. Used by the request decryption helper and by
+        admin endpoints that may target a session pinned to another
+        instance in a federated fleet."""
+        sess = self._store.lookup(session_id)
+        if sess is None:
+            sess = await self._store.hydrate(session_id)
         if sess is None or sess.is_expired():
             if sess is not None:
                 self._zeroize(sess)
-                self._by_id.pop(sess.session_id, None)
+                await self._store.delete(session_id)
             return None
         return sess
 
     def all(self) -> list[Session]:
-        return [s for s in self._by_id.values() if not s.is_expired()]
+        return self._store.all()
 
     async def terminate(self, session_id: bytes) -> bool:
         async with self._lock:
-            sess = self._by_id.pop(session_id, None)
+            sess = self._store.lookup(session_id)
+            if sess is None:
+                sess = await self._store.hydrate(session_id)
             if sess is None:
                 return False
             self._zeroize(sess)
-            return True
+            return await self._store.delete(session_id)
 
     async def reap_expired(self) -> int:
         async with self._lock:
-            removed = 0
-            for sid in list(self._by_id.keys()):
-                s = self._by_id[sid]
-                if s.is_expired():
-                    self._zeroize(s)
-                    del self._by_id[sid]
-                    removed += 1
-            return removed
+            return await self._store.reap_expired()
+
+    async def persist(self, session: Session) -> None:
+        """Write the latest session state to the backing store.
+
+        Called after mutations that need to survive a failover: replay
+        watermark advances, ``last_used_at`` updates, ``s2c_counter``
+        increments. For :class:`InMemorySessionStore` this is a cheap
+        dict re-insert (the cached and stored object are the same
+        reference). For Redis it is an actual write.
+        """
+        await self._store.put(session)
 
     @staticmethod
     def _zeroize(session: Session) -> None:

@@ -44,10 +44,15 @@ async def create_session(req: HandshakeRequest, request: Request) -> Response:
     return Response(content=response.model_dump_json(), media_type="application/json")
 
 
-@router.delete("/session/{session_id_b64}")
+@router.delete("/session/{session_id_b64:path}")
 async def terminate_session(session_id_b64: str, request: Request) -> Response:
+    # Accept either standard or URL-safe base64. The SDK sends URL-safe; we
+    # accept both so curl users can paste whatever their tool produces.
     try:
-        sid = base64.b64decode(session_id_b64, validate=True)
+        try:
+            sid = base64.urlsafe_b64decode(session_id_b64)
+        except Exception:
+            sid = base64.b64decode(session_id_b64, validate=True)
     except Exception:
         raise HTTPException(status_code=400) from None
     removed = await request.app.state.session_manager.terminate(sid)

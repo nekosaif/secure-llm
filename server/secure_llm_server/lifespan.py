@@ -24,6 +24,7 @@ from secure_llm_server.models.registry import (
 from secure_llm_server.observability.error_tracker import ErrorTracker
 from secure_llm_server.observability.status import StatusBuilder
 from secure_llm_server.session.manager import SessionManager
+from secure_llm_server.session.store import InMemorySessionStore, SessionStore
 
 
 @asynccontextmanager
@@ -83,9 +84,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.models = models
 
+    store: SessionStore
+    if settings.federation.session_store == "redis":
+        if not settings.federation.session_store_url:
+            raise RuntimeError(
+                "[federation].session_store='redis' requires "
+                "[federation].session_store_url"
+            )
+        from secure_llm_server.session.redis_store import build_redis_session_store
+
+        store = build_redis_session_store(settings.federation.session_store_url)
+        log.info(
+            "boot.federation",
+            session_store="redis",
+            identity_replicated=settings.federation.identity_replicated,
+        )
+    else:
+        store = InMemorySessionStore()
     sessions = SessionManager(
         ttl_seconds=settings.crypto.session_ttl_seconds,
         max_lifetime_seconds=settings.crypto.session_max_lifetime_seconds,
+        store=store,
     )
     app.state.session_manager = sessions
     app.state.errors = ErrorTracker(capacity=settings.observability.error_buffer_size)

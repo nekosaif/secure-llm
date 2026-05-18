@@ -20,6 +20,7 @@ import stat
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Protocol
 
 from nacl.public import PrivateKey
 from nacl.signing import SigningKey
@@ -202,6 +203,59 @@ def load_or_init_keystore(key_dir: Path, allowlist_path: Path | None) -> Keystor
         server = load_server_identity(key_dir)
     allowlist = load_allowlist(allowlist_path) if allowlist_path else {}
     return Keystore(server=server, allowlist=allowlist, allowlist_path=allowlist_path)
+
+
+# ----- KeystoreBackend Protocol (v1.3 federation, v2.0 TEE-sealed) -----
+
+
+class KeystoreBackend(Protocol):
+    """Pluggable identity backend.
+
+    Two implementations are anticipated:
+
+    - :class:`FileKeystoreBackend` (v1.3): reads ``server.{x25519,
+      ed25519}.key`` from disk. The same identity files are shared
+      across every instance in a federated fleet via the operator's
+      config-management tool.
+    - ``SealedKeystoreBackend`` (v2.0, planned): the server identity
+      is unsealed by a TEE-gated KMS at boot. The interface below is
+      sufficient for that future swap — no caller in the rest of the
+      codebase touches the on-disk files directly.
+    """
+
+    def load_server_identity(self) -> ServerIdentity: ...
+
+    def load_allowlist(self) -> dict[bytes, AuthorizedClient]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class FileKeystoreBackend:
+    """The current on-disk implementation, wrapped in the new Protocol.
+
+    Behavior is unchanged: this is just the existing module-level
+    functions hung off a single object so v2.0 can drop in a
+    TEE-sealed backend without touching the call sites.
+    """
+
+    key_dir: Path
+    allowlist_path: Path | None
+
+    def load_server_identity(self) -> ServerIdentity:
+        if not (self.key_dir / "server.x25519.key").exists():
+            return init_server_identity(self.key_dir)
+        return load_server_identity(self.key_dir)
+
+    def load_allowlist(self) -> dict[bytes, AuthorizedClient]:
+        if self.allowlist_path is None:
+            return {}
+        return load_allowlist(self.allowlist_path)
+
+    def to_keystore(self) -> Keystore:
+        return Keystore(
+            server=self.load_server_identity(),
+            allowlist=self.load_allowlist(),
+            allowlist_path=self.allowlist_path,
+        )
 
 
 # ----- CLI entry: invoked from bootstrap.sh -----

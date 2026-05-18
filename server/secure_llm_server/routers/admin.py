@@ -136,7 +136,9 @@ async def terminate_session(request: Request) -> Response:
     sid = base64.b64decode(req.session_id)
     # Tenant-admins can only terminate sessions in their own tenant; super_admin
     # can terminate any.
-    target = state.session_manager.lookup(sid)
+    # Use lookup_async so cross-instance terminations work in a
+    # federated deployment (the target may be pinned to another node).
+    target = await state.session_manager.lookup_async(sid)
     if target is not None and not _is_super(session) and target.tenant != session.tenant:
         audit_event(
             "admin.session.terminate.cross_tenant_denied",
@@ -149,6 +151,10 @@ async def terminate_session(request: Request) -> Response:
         )
         body = encrypt_response(session, err, method=request.method, path=request.url.path)
         return Response(status_code=403, content=body, media_type="application/octet-stream")
+    # When terminating *our own* session, save the s2c direction before
+    # SessionManager zeroes its keys so the goodbye envelope is still
+    # decryptable by the caller.
+    saved_direction = session.s2c if sid == session.session_id else None
     removed = await state.session_manager.terminate(sid)
     audit_event(
         "admin.session.terminate",
@@ -157,7 +163,11 @@ async def terminate_session(request: Request) -> Response:
         tenant=session.tenant,
     )
     body = encrypt_response(
-        session, {"terminated": removed}, method=request.method, path=request.url.path
+        session,
+        {"terminated": removed},
+        method=request.method,
+        path=request.url.path,
+        direction=saved_direction,
     )
     return Response(content=body, media_type="application/octet-stream")
 

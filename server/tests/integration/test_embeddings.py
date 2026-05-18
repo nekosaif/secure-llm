@@ -75,6 +75,35 @@ def _build_app(tmp_path: Path) -> tuple[FastAPI, Keystore, Path]:
     return app, keystore, tmp_path / "client"
 
 
+def test_embeddings_manager_error_surfaces(tmp_path: Path):
+    """ManagerError(MODEL_NOT_FOUND) from the manager → encrypted 400."""
+    from secure_llm_client.errors import ModelNotFound
+    from secure_llm_protocol.errors import ErrorCode
+    from secure_llm_server.models.manager import ManagerError
+
+    app, keystore, client_key_base = _build_app(tmp_path)
+
+    class _Failing:
+        async def embed(self, *, model_id: str, inputs: list[str], tenant: str = "default") -> Any:
+            raise ManagerError(ErrorCode.MODEL_NOT_FOUND, "no such model")
+
+    app.state.models = _Failing()
+    import pytest
+
+    base = "http://testserver"
+    http = TestClient(app, base_url=base)
+    identity = ClientIdentity.load(client_key_base)
+    t = Transport(
+        base_url=base,
+        identity=identity,
+        pinned_server_pk=keystore.server.x25519_pk,
+        verify=False,
+    )
+    t._client = http  # type: ignore[attr-defined]
+    with pytest.raises(ModelNotFound):
+        t.request("POST", "/v1/embeddings", payload={"model": "stub", "input": ["x"]})
+
+
 def test_embeddings_roundtrip(tmp_path: Path):
     app, keystore, client_key_base = _build_app(tmp_path)
     base = "http://testserver"

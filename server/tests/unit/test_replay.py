@@ -5,6 +5,12 @@ import pytest
 from secure_llm_server.crypto.replay import ReplayDetected, ReplayWindow
 
 
+def test_negative_counter_rejected():
+    w = ReplayWindow()
+    with pytest.raises(ReplayDetected, match="negative counter"):
+        w.check_and_advance(-1)
+
+
 def test_forward_progress():
     w = ReplayWindow()
     for i in range(1, 10):

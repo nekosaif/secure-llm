@@ -146,8 +146,12 @@ exclude_also = [
   "if TYPE_CHECKING:",
   "raise NotImplementedError",
 ]
-# Honest baseline for the testable surface after the omits above.
-# Router-level integration tests for completions, debug, models, system
-# landed in v1.2-followup; next ratchet covers admin + middleware +
-# session/manager edge cases.
-fail_under = 65
+# Coverage ratchet history (newest first):
+#   2026-05-18: 65 → 92  (6-wave push: middleware, admin, registry, status,
+#                         envelope errors, keystore, transport errors,
+#                         streaming keepalive, handshake errors, replay
+#                         negative counter, multi-tenant — measured 94.5%)
+#   2026-05-18: 55 → 65  (router-level integration tests for completions,
+#                         debug, models, system)
+#   2026-05-17: 75 → 55  (initial drop after omit list landed)
+fail_under = 92

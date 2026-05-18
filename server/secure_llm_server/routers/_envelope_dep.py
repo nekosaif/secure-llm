@@ -17,7 +17,12 @@ from pydantic import BaseModel, ValidationError
 
 from secure_llm_protocol.errors import ErrorCode
 from secure_llm_protocol.schemas import ErrorEnvelope
-from secure_llm_server.crypto.envelope import EnvelopeAuthError, open_envelope, seal
+from secure_llm_server.crypto.envelope import (
+    DirectionKeys,
+    EnvelopeAuthError,
+    open_envelope,
+    seal,
+)
 from secure_llm_server.crypto.replay import ReplayDetected
 from secure_llm_server.metrics import envelope_failures_total
 from secure_llm_server.session.manager import Session, SessionManager
@@ -61,7 +66,10 @@ async def decrypt_request(
         await _slow(started)
         raise _err(ErrorCode.BAD_ENVELOPE, http=400) from None
 
-    session = session_manager.lookup(env.session_id)
+    # Federation note: lookup_async falls back to the backing store on
+    # cache miss, so a session created on instance A can be served by
+    # instance B after a failover.
+    session = await session_manager.lookup_async(env.session_id)
     if session is None:
         envelope_failures_total.labels("unknown_session").inc()
         await _slow(started)
@@ -95,6 +103,10 @@ async def decrypt_request(
         raise _err(ErrorCode.BAD_REQUEST, message=str(e), http=400) from None
 
     session.touch()
+    # Persist replay watermark + last_used_at so a federated peer
+    # picking this session up after failover sees the right state.
+    # No-op for the in-memory store.
+    await session_manager.persist(session)
     request.state.client_fingerprint = session.client_fingerprint
     request.state.tenant = session.tenant
     structlog.contextvars.bind_contextvars(
@@ -111,14 +123,22 @@ def encrypt_response(
     *,
     method: str,
     path: str,
+    direction: DirectionKeys | None = None,
 ) -> bytes:
+    """Seal ``payload`` for this session's s2c direction.
+
+    ``direction`` overrides ``session.s2c`` — the admin terminate handler
+    saves the live direction keys before calling ``SessionManager.terminate``
+    (which zeroes them) so it can still send a final goodbye envelope the
+    caller can decrypt.
+    """
     if isinstance(payload, BaseModel):
         body = payload.model_dump_json().encode("utf-8")
     else:
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     session.s2c_counter += 1
     return seal(
-        direction=session.s2c,
+        direction=direction if direction is not None else session.s2c,
         counter=session.s2c_counter,
         session_id=session.session_id,
         method=method,

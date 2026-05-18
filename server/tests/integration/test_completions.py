@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from secure_llm_client.errors import SecureLLMError
+from secure_llm_protocol.errors import ErrorCode
 from secure_llm_protocol.schemas import CompletionResponse
 from secure_llm_server.routers.completions import router as completions_router
 
@@ -50,6 +51,22 @@ def test_completion_roundtrip(tmp_path: Path):
     assert resp.text == "olleh"
     assert resp.finish_reason == "stop"
     assert resp.usage.total_tokens == 2
+
+
+def test_completion_manager_error_surfaces(tmp_path: Path):
+    """ManagerError(QUEUE_FULL) from the manager → encrypted 400 with QueueFull."""
+    from secure_llm_client.errors import QueueFull
+    from secure_llm_server.models.manager import ManagerError
+
+    class _Failing:
+        async def complete(self, **kwargs: Any) -> Any:
+            raise ManagerError(ErrorCode.QUEUE_FULL, "full")
+
+    app, keystore, _ = build_app(tmp_path, extra_routers=[completions_router])
+    app.state.models = _Failing()
+    t = make_transport(app, keystore, tmp_path / "client")
+    with pytest.raises(QueueFull):
+        t.request("POST", "/v1/completions", payload={"model": "stub", "prompt": "x"})
 
 
 def test_completion_stream_true_rejected(tmp_path: Path):

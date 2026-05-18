@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -60,6 +60,25 @@ class LimitsSection(BaseSettings):
     slowloris_header_timeout_seconds: int = 10
 
 
+class FederationSection(BaseSettings):
+    """Federated routing — multi-instance deployments behind one LB.
+
+    With ``session_store="memory"`` (the default) each server instance
+    has its own session table; the deployment is single-instance.
+    With ``session_store="redis"`` sessions are mirrored to Redis so
+    a fleet of stateless instances can fail over to each other.
+
+    ``identity_replicated`` is informational only — set ``true`` when
+    every instance in the fleet shares the same X25519/Ed25519 server
+    identity (i.e. clients TOFU-pin one public key for the fleet).
+    Drives the rolling-restart runbook output.
+    """
+
+    session_store: Literal["memory", "redis"] = "memory"
+    session_store_url: str | None = None
+    identity_replicated: bool = False
+
+
 class ObservabilitySection(BaseSettings):
     log_level: str = "INFO"
     log_format: str = "json"
@@ -84,6 +103,7 @@ class Settings(BaseSettings):
     models: ModelsSection
     inference: InferenceSection
     limits: LimitsSection = Field(default_factory=LimitsSection)
+    federation: FederationSection = Field(default_factory=FederationSection)
     observability: ObservabilitySection = Field(default_factory=ObservabilitySection)
 
 

@@ -119,6 +119,12 @@ smoke-v12: bootstrap ## v1.2: smoke + LoRA + multi-tenant isolation
 	                  server/tests/integration/test_multi_tenant.py \
 	                  server/tests/unit/test_streaming.py
 
+.PHONY: smoke-v13
+smoke-v13: bootstrap ## v1.3: federation (SessionStore + Redis-backed failover)
+	$(call guard)
+	$(URUN) pytest -q server/tests/unit/test_federation.py \
+	                  server/tests/unit/test_keystore_backend.py
+
 .PHONY: crypto-soak
 crypto-soak: bootstrap ## 1M envelope roundtrips
 	$(call guard)

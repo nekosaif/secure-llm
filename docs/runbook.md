@@ -65,6 +65,35 @@ or `"malformed"`.
 2. If it's coming from many clients: a server change broke the wire
    format — `git diff` on `crypto/envelope.py` and `protocol/wire.py`.
 
+## "Redis unreachable" (federated deployments)
+
+Signal: server logs `boot.federation` then later `unknown_session` /
+`hydrate` errors after a network partition; `INFO`-level Redis client
+warnings from `redis.asyncio`.
+
+1. `redis-cli -u $SESSION_STORE_URL ping` to confirm.
+2. If Redis is down: existing sessions cached on the *current* instance
+   still work; failover to a peer will not. Restart Redis; sessions in
+   Redis survive only if `appendonly yes` is configured or the dataset
+   fits a save snapshot.
+3. If Redis is up but unreachable from one instance: it's a network
+   issue (VPC peering, firewall). Restore connectivity, no
+   server-side restart needed — the client reconnects on next op.
+4. Worst case (Redis data lost): every client sees one
+   `unknown_session` and transparently rehandshakes.
+
+## "instance identity mismatch" (federated deployments)
+
+Signal: clients pinned via `sllm trust` start failing with
+`server_key_mismatch` against one instance but not others.
+
+1. On each instance: `sha256sum data/keys/server.x25519.key.pub`. Every
+   sum must be identical across the fleet.
+2. If one differs: that instance was bootstrapped from scratch instead
+   of having the shared identity copied in. Stop it, follow "Adding a
+   node" in `operator-guide.md`, restart.
+3. Until fixed, drain the offending instance from the LB.
+
 ## "key rotation needed"
 
 If you suspect a server key compromise:

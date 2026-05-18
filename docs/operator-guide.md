@@ -35,6 +35,8 @@ Important sections:
 - `[limits]` — request size, rate-limit RPM per client, slowloris timeouts.
 - `[observability]` — log level/format/dir, metrics bind, ring/error
   buffer sizes.
+- `[federation]` — multi-instance / load-balanced deployments. See
+  "Federation" below.
 
 ## Add a client
 
@@ -107,6 +109,73 @@ client.chat.completions.create(
 
 Same LoRA set + base model = same cache slot. Different LoRA scales
 or different LoRAs = a fresh slot subject to LRU eviction.
+
+## Federation (v1.3)
+
+For a fleet of stateless server instances behind a single load balancer:
+
+```toml
+[federation]
+session_store = "redis"
+session_store_url = "redis://10.0.0.5:6379/0"
+identity_replicated = true
+```
+
+Install the federation extras on every instance:
+
+```
+uv sync --extra federation     # pulls in redis>=5.0
+```
+
+Operational rules — these are not optional:
+
+1. **All instances share one X25519/Ed25519 server identity.** Copy
+   `data/keys/server.*.key{,.pub}` and `data/keys/server.age.key` from
+   the first instance to every other; never let `bootstrap` generate
+   a per-instance identity. Clients TOFU-pin one public key for the
+   whole fleet.
+2. **TLS terminates on each instance, not the LB.** Clients verify
+   the envelope identity directly. The LB must run in SNI-passthrough
+   / TCP mode. A TLS-terminating LB breaks the threat model and the
+   handshake will fail.
+3. **LB health checks point at `/healthz` and `/readyz`** (plaintext,
+   no envelope) — those endpoints are explicitly safe to expose.
+4. **Redis is inside the trust boundary.** Bind to localhost or a
+   private VPC reachable only by the fleet, require auth
+   (`requirepass`), and use TLS if it crosses any network. A
+   reachable-and-unauthenticated Redis equals total compromise.
+5. **Prefer session-affinity LB routing** (e.g. consistent hash on a
+   client identifier). Failover is supported but causes a one-time
+   counter-out-of-order rejection on the client, which triggers a
+   transparent rehandshake. Affinity makes that the exception.
+
+### Rolling restart with shared identity
+
+```
+# Drain one instance at a time.
+sllm admin shutdown --grace 60 --server https://instance-a:8443
+# Wait for LB to mark it unhealthy and stop sending traffic.
+systemctl restart secure-llm   # on instance A
+# Repeat for B, C, ...
+```
+
+Sessions pinned to the draining instance survive: the client's next
+request lands on a peer instance, which hydrates the session from
+Redis and continues. AEAD keys never leave the trust boundary.
+
+### Adding a node
+
+```
+# On a new host:
+make bootstrap                      # generates identity — discard.
+rm -rf data/keys/server.*           # remove the per-host identity.
+# Copy the shared identity from an existing instance:
+scp existing:/var/lib/secure-llm/keys/server.* data/keys/
+chmod 0600 data/keys/server.*.key data/keys/server.age.key
+# Same data/config.toml as the rest of the fleet (incl. [federation]).
+make run-bg
+# Register with the LB and you're done.
+```
 
 ## Pin the server
 

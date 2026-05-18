@@ -6,6 +6,37 @@ Follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### Added — v1.3 scope (federated routing)
+- **`SessionStore` Protocol** with `InMemorySessionStore` (default)
+  and `RedisSessionStore` (opt-in via `[federation].session_store =
+  "redis"`). `SessionManager` delegates all backing-store ops to the
+  Protocol; the hot path (`lookup`) stays sync so single-instance
+  deployments pay no Redis latency.
+- **Failover semantics.** `SessionManager.lookup_async` falls back to
+  the backing store on cache miss, letting instance B serve a session
+  created on instance A after a load-balancer failover. AEAD direction
+  keys, replay watermark (`head`), counter, tenant and scopes are
+  mirrored to Redis with the session's natural TTL. The 1024-bit
+  replay bitmap stays per-instance — counter monotonicity makes this
+  safe; documented in `docs/threat-model.md`.
+- **`KeystoreBackend` Protocol + `FileKeystoreBackend`** wrapping the
+  existing on-disk keystore. v2.0's TEE-sealed backend will drop into
+  the same interface without touching the rest of the codebase.
+- **`[federation]` config section**: `session_store`,
+  `session_store_url`, `identity_replicated`. Boot fails closed if
+  `session_store="redis"` is set without a URL.
+- **Optional dependency**: `pip install secure-llm-server[federation]`
+  brings in `redis>=5.0`. The base install is unchanged.
+- **Operator-facing docs**: rolling-restart-with-shared-identity and
+  add-a-node procedures (`docs/operator-guide.md`); Redis-unreachable
+  and instance-identity-mismatch incidents (`docs/runbook.md`); Redis
+  trust-boundary + failover-window rationale (`docs/threat-model.md`).
+- 21 new tests: serialization round-trip, Redis-store put/hydrate/
+  delete/reap, failover scenarios (session-on-A-visible-on-B,
+  terminate-on-B-propagates), persist write-through, `InMemoryStore`
+  Protocol contract, `FileKeystoreBackend` round-trip, missing-redis
+  remediation message.
+
 ### Added — v1.2 scope (LoRA hot-swap + multi-tenant)
 - **LoRA adapters**. New `LoraRegistry` (sibling of `ModelRegistry`),
   `download_and_seal_lora` (HF + SHA-verify + age-encrypt to
@@ -54,6 +85,38 @@ Follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
   set to 65, measured 65.85%. Next ratchet targets `admin` (39%),
   `_envelope_dep` (62%), `session/manager` (61%), and the middleware
   trio.
+- Coverage gate raised from 65 → 92 after a six-wave push (149 new
+  tests, +29 percentage points): middleware deny + happy paths; admin
+  endpoint sweep; registry + LoRA + multi-tenant factory; session
+  manager lifecycle; StatusBuilder snapshots; six envelope error paths
+  (too-short body, malformed header, unknown session, replay, AEAD
+  failure, schema mismatch); session DELETE; chat non-streaming;
+  embeddings ManagerError; SDK conversation/system/completions/
+  embeddings/models/debug/admin surfaces; transport session-expired
+  rehandshake + plain-JSON error envelope + malformed SSE base64;
+  at-rest age round-trip; keystore init/load + permissions + reload;
+  config path resolution; readiness check; wire framing + KDF; ring
+  log; admin deny sweep (non-admin scope across every admin route);
+  cross-tenant terminate denial; streaming keepalive; handshake error
+  paths; replay window negative counter. **Measured 94.5%.**
+
+### Fixed
+- Client transport's `_replay` watermark persisted across rehandshakes,
+  causing the first request after a session-expired rehandshake to be
+  rejected as a replay (counter=1 of the new session collided with
+  counter=1 of the previous session). `Transport._do_handshake` now
+  installs a fresh `_ReplayClient()` on every successful handshake.
+- `routers/admin.terminate_session` zeroized the caller's own s2c key
+  before encrypting the goodbye envelope when the caller terminated
+  their own session, leaving the client unable to decrypt the reply.
+  `encrypt_response` now accepts an optional `direction=` override and
+  the handler saves the s2c keys before terminating so the goodbye can
+  be sealed with the saved direction.
+- Session-terminate DELETE route used the default Starlette string path
+  converter, which rejects `/` in path parameters. Standard base64 can
+  contain `/`. The server now accepts both standard and URL-safe base64
+  via the `{session_id_b64:path}` converter, and the SDK sends URL-safe
+  base64 by default.
 - `make sec` / CI security job now uses `scripts/sec_audit.sh`, which
   exports each workspace member's production dependency tree via
   `uv export --no-dev --no-emit-workspace` and audits that. Editable

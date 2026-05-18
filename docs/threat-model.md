@@ -16,6 +16,7 @@ log, network, or backup access to the server.
 | Stolen server key | Operator rotates server identity (`sllm-admin rotate-server-key --grace`); clients re-pin. Existing sessions stay valid until TTL. |
 | Resource DoS (slowloris, oversized bodies, body-flood) | uvicorn slowloris timeouts, request size limit, per-`(tenant, client)` token-bucket rate limit. |
 | Tenant-A reading tenant-B's data (v1.2) | `AuthorizedClient.tenant` is derived server-side from the allowlist (never client-asserted on the wire). The directory layout `data/keys/tenants/<t>/` *forces* the tenant on entries inside it. Models, LoRAs, sessions, audit events, structlog contextvars, and rate-limit buckets are all keyed by `(tenant, …)`. Admin endpoints filter to the caller's tenant; cross-tenant ops require `super_admin`. |
+| Session loss on instance failover (v1.3) | Optional `[federation].session_store = "redis"` mirrors session state (AEAD keys, replay watermark, counter, tenant) to Redis. Instance B can hydrate a session created on instance A after a failover. Redis is **inside** the server trust boundary — see "Out of scope" below for the constraint. |
 
 ## Out of scope (we do **not** defend against — by design)
 
@@ -26,6 +27,9 @@ log, network, or backup access to the server.
 | DoS via legitimate-looking encrypted requests | Rate limit + queue caps mitigate but don't eliminate. |
 | Side channels in `llama.cpp` | We trust the inference backend. |
 | Cryptographic novelty | All primitives via libsodium (PyNaCl) and age (pyrage). No custom curves, ciphers, or MACs. |
+| Network access to the Redis broker (v1.3) | Redis (when federation is enabled) sits inside the trust boundary alongside the server processes — it stores AEAD direction keys, replay watermarks, and counters. **Constraint:** Redis must be bound to localhost or a private VPC reachable only by the server fleet, and authenticated with `requirepass` + TLS if it crosses any network. A reachable-and-unauthenticated Redis is a complete compromise. Documented in `docs/operator-guide.md` under "Adding a node". |
+| Failover within the 1024-counter window | The replay-bitmap is per-instance; only `head` is mirrored to Redis. On failover the new instance accepts any counter > persisted `head`. Because client counters are strictly monotonic per direction, the only loss is duplicate-detection for the old instance's in-flight envelopes (a malicious replay would still need to know c2s key material, which is in Redis — i.e. compromise of Redis = compromise of the server). |
+| `s2c_counter` lag on failover (v1.3) | The s2c counter is persisted on the next `decrypt_request`, not on response sealing. After failover, the new instance may resend a counter the old instance just used. The client surfaces this as a counter-out-of-order envelope rejection and triggers a rehandshake. Mitigation: prefer session-affinity LB routing so failover is the exceptional case. |
 
 ## STRIDE per component
 
