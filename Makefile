@@ -125,6 +125,13 @@ smoke-v13: bootstrap ## v1.3: federation (SessionStore + Redis-backed failover)
 	$(URUN) pytest -q server/tests/unit/test_federation.py \
 	                  server/tests/unit/test_keystore_backend.py
 
+.PHONY: smoke-v20
+smoke-v20: bootstrap ## v2.0: TEE attestation foundation + multimodal content parts
+	$(call guard)
+	$(URUN) pytest -q server/tests/unit/test_attestation.py \
+	                  server/tests/unit/test_multimodal.py \
+	                  server/tests/integration/test_attestation_handshake.py
+
 .PHONY: crypto-soak
 crypto-soak: bootstrap ## 1M envelope roundtrips
 	$(call guard)

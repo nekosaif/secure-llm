@@ -6,6 +6,41 @@ Follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### Added — v2.0 foundation (TEE attestation + multimodal)
+- **`AttestationBackend` Protocol** (server) + **`AttestationVerifier`
+  Protocol** (client). Three server backends ship: `NoneBackend`
+  (default, attestation disabled), `MockAttestationBackend`
+  (deterministic HMAC-signed blob for CI), and `SevSnpBackend` /
+  `NitroEnclaveBackend` stubs that raise `NotImplementedError` until
+  the `server/deploy/sev-snp/` infrastructure lands. Client side:
+  `NoneVerifier` and `MockAttestationVerifier`.
+- **Optional `attestation_report` field** on `HandshakeResponse`. The
+  report's userdata is bound to `SHA-256(full_handshake_transcript)`,
+  so a captured report cannot be detached and replayed against a
+  different handshake. The Ed25519 transcript signature is unchanged
+  and independent — old clients still verify cleanly.
+- **`known_hosts.toml` schema** extended with optional `measurement`
+  and `attestation_required` per host. Honored by the SDK when the
+  caller passes an `attestation_verifier` to `Transport`. Fail-closed
+  semantics: an attested server without a configured verifier, or a
+  measurement mismatch, raises `ServerKeyMismatch`.
+- **Multimodal content parts.** `ChatMessage.content` widened from
+  `str` to `str | list[ChatContentPart]` (OpenAI-shape). Parts: text
+  (`{type: "text", text}`) and image_url (`{type: "image_url",
+  image_url: {url, detail}}`). Only `data:` URIs are honored;
+  `https://` URLs are refused to prevent egress via prompt injection.
+- **`MAX_REQUEST_BYTES` raised from 8 MiB to 32 MiB.** Operators can
+  still cap lower per-deployment via `[limits].max_request_bytes`.
+- **`LlamaBackend.clip_model_path`** parameter for Llava-style models;
+  routed via `ModelEntry.clip_companion`. Hardware test path arrives
+  with a real Llava GGUF in a follow-up.
+- 27 new tests: round-trip, transcript binding, measurement mismatch,
+  wrong shared secret, malformed blob, wrong-type blob, `NoneVerifier`
+  fail-closed on pinned measurement, stub backends raise, full
+  handshake integration (success / measurement mismatch /
+  required-but-omitted / no-verifier-rejected), schema tests for
+  text + image_url parts, mixed-content round-trip, invalid part types.
+
 ### Added — v1.3 scope (federated routing)
 - **`SessionStore` Protocol** with `InMemorySessionStore` (default)
   and `RedisSessionStore` (opt-in via `[federation].session_store =

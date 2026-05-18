@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 from nacl.public import PrivateKey
 
+from secure_llm_client.crypto.attestation import AttestationVerifier
 from secure_llm_client.crypto.envelope import (
     EnvelopeAuthError,
     open_envelope,
@@ -75,10 +76,16 @@ class Transport:
         pinned_server_pk: bytes,
         timeout: httpx.Timeout | None = None,
         verify: bool | str = True,
+        attestation_verifier: AttestationVerifier | None = None,
+        pinned_measurement: str | None = None,
+        attestation_required: bool = False,
     ) -> None:
         self._base = base_url.rstrip("/")
         self._identity = identity
         self._pinned = pinned_server_pk
+        self._attestation_verifier = attestation_verifier
+        self._pinned_measurement = pinned_measurement
+        self._attestation_required = attestation_required
         self._client = httpx.Client(
             base_url=self._base,
             timeout=timeout or httpx.Timeout(connect=5, read=300, write=30, pool=5),
@@ -121,6 +128,9 @@ class Transport:
             handshake_request_ts=ts,
             response=HandshakeResponse.model_validate_json(r.content),
             pinned_server_static_pk=self._pinned,
+            attestation_verifier=self._attestation_verifier,
+            pinned_measurement=self._pinned_measurement,
+            attestation_required=self._attestation_required,
         )
         # Each handshake yields fresh keys + a fresh s2c counter starting at
         # 0 — so the *server* replay window resets implicitly. The client's

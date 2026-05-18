@@ -27,7 +27,7 @@ COUNTER_BYTES = 8
 NONCE_BYTES = 12
 TAG_BYTES = 16
 ENVELOPE_HEADER_SIZE = len(ENVELOPE_MAGIC) + 1 + SESSION_ID_BYTES + COUNTER_BYTES + NONCE_BYTES
-MAX_REQUEST_BYTES = 8 * 1024 * 1024  # default, overridable by server config
+MAX_REQUEST_BYTES = 32 * 1024 * 1024  # v2.0: raised to fit small images; capped per [limits]
 
 
 class EnvelopeError(ValueError):

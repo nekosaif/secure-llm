@@ -22,7 +22,7 @@ log, network, or backup access to the server.
 
 | Threat | Reason |
 |---|---|
-| Root on the running server | Plaintext is in RAM during inference. Only a TEE defends against this. Planned for v2.0 via SEV-SNP attestation in the handshake. |
+| Root on the running server | Plaintext is in RAM during inference. Only a TEE defends against this. v2.0 ships the protocol foundation (attestation field on `HandshakeResponse`, `AttestationBackend` Protocol with mock impl, client verifier wired to `known_hosts.toml`); SEV-SNP / Nitro hardware backends are stubbed until the `server/deploy/sev-snp/` infra lands. |
 | Tenant-vs-operator distrust | v1.2's tenant isolation is policy enforced by the server. The operator (anyone with root on the host) is still inside the trust boundary — they can read RAM, log payloads, or read the at-rest age identity. Tenants that distrust the operator (not just each other) need separate instances or a TEE. |
 | DoS via legitimate-looking encrypted requests | Rate limit + queue caps mitigate but don't eliminate. |
 | Side channels in `llama.cpp` | We trust the inference backend. |
@@ -30,6 +30,8 @@ log, network, or backup access to the server.
 | Network access to the Redis broker (v1.3) | Redis (when federation is enabled) sits inside the trust boundary alongside the server processes — it stores AEAD direction keys, replay watermarks, and counters. **Constraint:** Redis must be bound to localhost or a private VPC reachable only by the server fleet, and authenticated with `requirepass` + TLS if it crosses any network. A reachable-and-unauthenticated Redis is a complete compromise. Documented in `docs/operator-guide.md` under "Adding a node". |
 | Failover within the 1024-counter window | The replay-bitmap is per-instance; only `head` is mirrored to Redis. On failover the new instance accepts any counter > persisted `head`. Because client counters are strictly monotonic per direction, the only loss is duplicate-detection for the old instance's in-flight envelopes (a malicious replay would still need to know c2s key material, which is in Redis — i.e. compromise of Redis = compromise of the server). |
 | `s2c_counter` lag on failover (v1.3) | The s2c counter is persisted on the next `decrypt_request`, not on response sealing. After failover, the new instance may resend a counter the old instance just used. The client surfaces this as a counter-out-of-order envelope rejection and triggers a rehandshake. Mitigation: prefer session-affinity LB routing so failover is the exceptional case. |
+| Detached/replayed TEE attestation report (v2.0) | The report's userdata field is bound to `SHA-256(full_handshake_transcript)`. Any attempt to attach a captured report to a different handshake breaks the transcript-binding check, which the client verifies *in addition to* the vendor signature on the report. |
+| Multimodal payload bloat (v2.0) | `MAX_REQUEST_BYTES` raised from 8 MiB to 32 MiB to fit small images. The operator can lower the cap per-deployment via `[limits].max_request_bytes`. Remote `https://` URLs in image content parts are **rejected** server-side — only `data:` URIs are honored, so a malicious prompt cannot trigger outbound network egress. |
 
 ## STRIDE per component
 

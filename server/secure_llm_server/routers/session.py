@@ -32,6 +32,7 @@ async def create_session(req: HandshakeRequest, request: Request) -> Response:
             skew_seconds=state.settings.crypto.handshake_skew_seconds,
             ttl_seconds=state.settings.crypto.session_ttl_seconds,
             expected_host=req.server_host,
+            attestation=getattr(state, "attestation", None),
         )
     except HandshakeError as e:
         handshake_total.labels(e.code.value).inc()

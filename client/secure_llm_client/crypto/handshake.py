@@ -12,6 +12,11 @@ from nacl.bindings import crypto_scalarmult
 from nacl.public import PrivateKey
 from nacl.signing import SigningKey, VerifyKey
 
+from secure_llm_client.crypto.attestation import (
+    AttestationError,
+    AttestationVerifier,
+    transcript_digest,
+)
 from secure_llm_client.crypto.envelope import DirectionKeys
 from secure_llm_client.crypto.kdf import hkdf
 from secure_llm_protocol.schemas import HandshakeRequest, HandshakeResponse
@@ -130,6 +135,9 @@ def derive_session(
     handshake_request_ts: int,
     response: HandshakeResponse,
     pinned_server_static_pk: bytes,
+    attestation_verifier: AttestationVerifier | None = None,
+    pinned_measurement: str | None = None,
+    attestation_required: bool = False,
 ) -> HandshakeOutcome:
     server_static = _b64d(response.server_static_pk)
     server_ed25519 = _b64d(response.server_ed25519_pk)
@@ -168,6 +176,39 @@ def derive_session(
         from secure_llm_client.errors import HandshakeFailed
 
         raise HandshakeFailed("server signature invalid") from e
+
+    # v2.0: optional TEE attestation check. The attestation report (if
+    # present) commits to SHA-256(full_transcript) via its userdata
+    # field. If the operator pinned a measurement in known_hosts.toml,
+    # we require it match what the report claims.
+    if response.attestation_report is not None:
+        if attestation_verifier is None:
+            # The server attached a report but the client has no
+            # verifier — fail closed; misconfigured clients shouldn't
+            # silently accept attested servers.
+            from secure_llm_client.errors import ServerKeyMismatch
+
+            raise ServerKeyMismatch(
+                "server attached an attestation report but no verifier "
+                "is configured client-side"
+            )
+        blob = _b64d(response.attestation_report)
+        try:
+            attestation_verifier.verify(
+                blob=blob,
+                expected_userdata=transcript_digest(full_transcript),
+                expected_measurement=pinned_measurement,
+            )
+        except AttestationError as e:
+            from secure_llm_client.errors import ServerKeyMismatch
+
+            raise ServerKeyMismatch(f"attestation failed: {e}") from e
+    elif attestation_required:
+        from secure_llm_client.errors import ServerKeyMismatch
+
+        raise ServerKeyMismatch(
+            "attestation_required=True but server returned no attestation report"
+        )
 
     dh1 = crypto_scalarmult(bytes(client_eph_sk), server_eph)
     dh2 = crypto_scalarmult(bytes(identity.x25519_sk), server_static)

@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from secure_llm_server import logging as logmod
 from secure_llm_server.config import Settings, load_settings
 from secure_llm_server.crypto.at_rest import AtRestKey
+from secure_llm_server.crypto.attestation import AttestationBackend, NoneBackend
 from secure_llm_server.crypto.keystore import load_or_init_keystore
 from secure_llm_server.health import Readiness
 from secure_llm_server.models.manager import ModelManager
@@ -61,6 +62,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     at_rest = AtRestKey(keystore.server.age_secret_path)
     app.state.at_rest_key = at_rest
+
+    # v2.0: TEE attestation backend. Default is NoneBackend (attestation
+    # disabled). Real SEV-SNP / Nitro backends arrive with the
+    # deployment infra under server/deploy/sev-snp/ in a later iteration.
+    attestation: AttestationBackend = NoneBackend()
+    app.state.attestation = attestation
 
     registry = MultiTenantRegistry(Path(settings.models.storage_dir))
     app.state.registry = registry

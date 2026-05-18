@@ -27,8 +27,22 @@ current shapes):
 v1.1   Streaming + Embeddings              ~1–2 sprints   DONE
 v1.2   LoRA hot-swap + Multi-tenant        ~2–3 sprints   DONE
 v1.3   Federated routing                   ~1 sprint      DONE (2026-05-18)
-v2.0   TEE attestation + Multimodal        ~3–6 months
+v2.0a  TEE attestation foundation                         DONE (2026-05-18)
+v2.0b  Multimodal content parts foundation                DONE (2026-05-18)
+v2.0+  Hardware backends + Llava + audio   ~3–6 months
 ```
+
+**v2.0 foundation status** (2026-05-18). Software-only groundwork:
+attestation Protocol + mock backend/verifier, transcript-bound
+report, `known_hosts.toml` extended with measurement +
+`attestation_required`, schema widened for OpenAI-shape image parts,
+`LlamaBackend` plumbing for `clip_model_path`, `MAX_REQUEST_BYTES`
+raised to 32 MiB. Remaining for full v2.0: `SevSnpBackend` /
+`NitroEnclaveBackend` real impls (need SEV-SNP host),
+`server/deploy/sev-snp/` Terraform, Llava end-to-end test against a
+real GGUF, whisper audio endpoint. PROTOCOL_VERSION stays at 1.0
+since every v2.0 schema change is additive/optional — old clients
+still talk.
 
 Cross-cutting invariants that must survive every phase:
 

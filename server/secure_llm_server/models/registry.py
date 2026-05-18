@@ -20,6 +20,7 @@ import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 DEFAULT_TENANT = "default"
 
@@ -47,6 +48,10 @@ class ModelEntry:
     n_ctx_max: int | None = None
     downloaded_at: float = field(default_factory=lambda: time.time())
     tenant: str = DEFAULT_TENANT
+    # v2.0: id of the CLIP sidecar GGUF for Llava-style vision models.
+    # ``None`` means the model is text-only; image content parts in
+    # chat messages will be rejected by the router.
+    clip_companion: str | None = None
 
     @property
     def ciphertext_path(self) -> Path:
@@ -63,22 +68,20 @@ def normalize_id(filename: str) -> str:
 
 
 def write_meta(dir_: Path, entry: ModelEntry) -> None:
+    payload: dict[str, Any] = {
+        "id": entry.id,
+        "sha256": entry.sha256_plaintext,
+        "repo_id": entry.repo_id,
+        "filename": entry.filename,
+        "bytes_plaintext": entry.bytes_plaintext,
+        "bytes_ciphertext": entry.bytes_ciphertext,
+        "n_ctx_max": entry.n_ctx_max,
+        "downloaded_at": entry.downloaded_at,
+    }
+    if entry.clip_companion is not None:
+        payload["clip_companion"] = entry.clip_companion
     (dir_ / entry.meta_path).write_text(
-        json.dumps(
-            {
-                "id": entry.id,
-                "sha256": entry.sha256_plaintext,
-                "repo_id": entry.repo_id,
-                "filename": entry.filename,
-                "bytes_plaintext": entry.bytes_plaintext,
-                "bytes_ciphertext": entry.bytes_ciphertext,
-                "n_ctx_max": entry.n_ctx_max,
-                "downloaded_at": entry.downloaded_at,
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
 
@@ -94,6 +97,7 @@ def read_meta(path: Path) -> ModelEntry:
         bytes_ciphertext=int(data["bytes_ciphertext"]),
         n_ctx_max=data.get("n_ctx_max"),
         downloaded_at=float(data.get("downloaded_at", time.time())),
+        clip_companion=data.get("clip_companion"),
     )
 
 

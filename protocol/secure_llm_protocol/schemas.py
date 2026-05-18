@@ -41,6 +41,13 @@ class HandshakeResponse(_Strict):
     server_sig: str  # Ed25519 over full transcript
     nonce_prefix_c2s: str  # 4-byte hex, client→server direction
     nonce_prefix_s2c: str  # 4-byte hex, server→client direction
+    # v2.0: optional TEE attestation report (base64). The report's
+    # userdata field equals SHA-256(full_handshake_transcript) so a
+    # captured report cannot be detached and replayed against a
+    # different transcript. ``None`` means the server is not running
+    # under attestation — clients with attestation_required=true in
+    # known_hosts.toml refuse such handshakes.
+    attestation_report: str | None = None
 
 
 # ---- error envelope (plaintext-inside-envelope) ----
@@ -58,9 +65,49 @@ class ErrorEnvelope(_Strict):
 Role = Literal["system", "user", "assistant", "tool"]
 
 
+class TextContentPart(_Strict):
+    """OpenAI-shape text content part."""
+
+    type: Literal["text"] = "text"
+    text: str
+
+
+class ImageUrlPayload(_Strict):
+    """OpenAI-shape image url payload.
+
+    Accepts either a ``data:image/...;base64,...`` URL or an ``https://``
+    URL. The server side only honors ``data:`` URIs in v2.0 — remote URLs
+    require an outbound network egress that the server explicitly refuses
+    (would let a prompt exfiltrate via DNS / GET).
+    """
+
+    url: str
+    detail: Literal["auto", "low", "high"] = "auto"
+
+
+class ImageContentPart(_Strict):
+    """OpenAI-shape image content part."""
+
+    type: Literal["image_url"] = "image_url"
+    image_url: ImageUrlPayload
+
+
+# Union of allowed part shapes. ``Annotated[..., Field(discriminator="type")]``
+# keeps pydantic from probing each branch.
+ChatContentPart = Annotated[
+    TextContentPart | ImageContentPart,
+    Field(discriminator="type"),
+]
+
+
 class ChatMessage(_Strict):
     role: Role
-    content: str
+    # v2.0 widens ``content`` to either a plain string (the v1.x shape,
+    # still the common case) or an OpenAI-shape list of parts mixing
+    # text and image_url entries. The server enforces that image parts
+    # are only honored against a model whose registry entry has a
+    # ``clip_companion`` set.
+    content: str | list[ChatContentPart]
     name: str | None = None
 
 

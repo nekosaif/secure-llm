@@ -15,6 +15,7 @@ plus a 16-byte session_id and the ttl.
 from __future__ import annotations
 
 import base64
+import hashlib
 import secrets
 import time
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ from nacl.signing import VerifyKey
 from secure_llm_protocol.errors import ErrorCode
 from secure_llm_protocol.schemas import HandshakeRequest, HandshakeResponse
 from secure_llm_protocol.version import PROTOCOL_LABEL
+from secure_llm_server.crypto.attestation import AttestationBackend, NoneBackend
 from secure_llm_server.crypto.envelope import DirectionKeys
 from secure_llm_server.crypto.kdf import hkdf
 
@@ -110,6 +112,7 @@ def perform_handshake(
     ttl_seconds: int,
     expected_host: str | None = None,
     now: int | None = None,
+    attestation: AttestationBackend | None = None,
 ) -> tuple[HandshakeResponse, SessionMaterial]:
     """Validate the client's handshake and derive session material.
 
@@ -181,6 +184,17 @@ def perform_handshake(
 
     sig_out = server_identity.ed25519_sk.sign(full_transcript).signature
 
+    # v2.0: optional TEE attestation. The backend produces a vendor-
+    # format blob whose userdata field commits to SHA-256(full_transcript),
+    # so the report cannot be detached and replayed against a different
+    # handshake. The Ed25519 sig is independent — it covers the
+    # transcript only.
+    attestation_report_b64: str | None = None
+    backend = attestation if attestation is not None else NoneBackend()
+    blob = backend.generate(transcript_digest=hashlib.sha256(full_transcript).digest())
+    if blob is not None:
+        attestation_report_b64 = _b64e(blob)
+
     response = HandshakeResponse(
         session_id=_b64e(session_id),
         server_static_pk=_b64e(server_identity.x25519_pk),
@@ -190,6 +204,7 @@ def perform_handshake(
         server_sig=_b64e(sig_out),
         nonce_prefix_c2s=c2s.nonce_prefix.hex(),
         nonce_prefix_s2c=s2c.nonce_prefix.hex(),
+        attestation_report=attestation_report_b64,
     )
     material = SessionMaterial(
         session_id=session_id,
