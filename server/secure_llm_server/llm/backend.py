@@ -99,7 +99,8 @@ class LlamaBackend:
 
     def close(self) -> None:
         try:
-            del self._llm
+            if hasattr(self, "_llm"):
+                del self._llm
         finally:
             gc.collect()
             try:  # pragma: no cover — only fires on CUDA builds

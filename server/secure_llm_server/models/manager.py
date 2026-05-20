@@ -52,6 +52,7 @@ class _Loaded:
     backend: LlamaBackend
     n_ctx: int
     last_used: float
+    cache_key: str = ""
     state: ModelState = "loaded"
     queue: asyncio.Queue[Any] = field(default_factory=lambda: asyncio.Queue(maxsize=8))
     worker_task: asyncio.Task[None] | None = None
@@ -242,6 +243,7 @@ class ModelManager:
             loaded = await self._load(
                 entry,
                 n_ctx or self._n_ctx_default,
+                cache_key=cache_key,
                 mode=mode,
                 loras=loras,
                 tenant=tenant,
@@ -320,6 +322,7 @@ class ModelManager:
         entry: ModelEntry,
         n_ctx: int,
         *,
+        cache_key: str = "",
         mode: str = "chat",
         loras: LoraSpec = (),
         tenant: str = DEFAULT_TENANT,
@@ -371,6 +374,7 @@ class ModelManager:
             backend=backend,
             n_ctx=n_ctx,
             last_used=time.monotonic(),
+            cache_key=cache_key,
             queue=asyncio.Queue(maxsize=self._queue_depth),
         )
         slot_name = f"{entry.id}:{mode}"
@@ -421,7 +425,7 @@ class ModelManager:
         if self._closing or loaded.state != "loaded":
             return
         _log.info("manager.idle_offload", id=loaded.entry.id)
-        await self._unload(loaded.entry.id, loaded)
+        await self._unload(loaded.cache_key, loaded)
 
     async def _submit(
         self, loaded: _Loaded, *, kind: str, payload: dict[str, Any], stream: bool
