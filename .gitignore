@@ -94,3 +94,6 @@ Desktop.ini
 *.bak
 *.orig
 .scratch/
+
+# Claude Code working directory (skills, settings, scratch) — not part of the project source
+.claude/
