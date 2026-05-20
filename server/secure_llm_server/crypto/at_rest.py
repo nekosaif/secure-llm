@@ -36,6 +36,29 @@ class AtRestKey:
         return self._identity
 
 
+def _write_all(fd: int, data: bytes) -> None:
+    """Loop ``os.write`` until every byte of ``data`` lands on disk.
+
+    ``os.write`` is a thin ``write(2)`` wrapper that returns the number of
+    bytes actually written; on Linux a single ``write(2)`` is capped at
+    ``0x7FFFF000`` bytes (~2 GiB), so for multi-GiB blobs (e.g. a Q4_K_M
+    9B GGUF, ~5 GiB) the syscall silently truncates. Without this loop the
+    decrypted model is short and ``llama.cpp`` rejects it with a confusing
+    "tensor data not within file bounds" error. The regression test in
+    ``tests/unit/test_at_rest.py`` monkey-patches ``os.write`` to return
+    short counts and asserts every byte still gets written.
+    """
+    mv = memoryview(data)
+    n = 0
+    while n < len(mv):
+        written = os.write(fd, mv[n:])
+        if written == 0:
+            # POSIX says this means EOF (rare for regular files); treat as
+            # disk-full / closed-fd. Fail loudly rather than spin forever.
+            raise OSError("os.write returned 0 — disk full or fd closed")
+        n += written
+
+
 def encrypt_file(src: Path, dst: Path, key: AtRestKey) -> None:
     """Encrypt ``src`` → ``dst.age`` atomically."""
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -61,7 +84,7 @@ def decrypt_to_tmpfs(src: Path, tmpfs_dir: Path, key: AtRestKey) -> Iterator[Pat
     name = tmpfs_dir / f"{uuid.uuid4()}.gguf"
     fd = os.open(str(name), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
-        os.write(fd, plaintext)
+        _write_all(fd, plaintext)
     finally:
         os.close(fd)
     try:

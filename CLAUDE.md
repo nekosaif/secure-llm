@@ -68,6 +68,14 @@ See `Makefile` for the full target list; `make help` prints it.
     `https://` URLs in `ImageUrlPayload.url` so a malicious prompt
     cannot trigger outbound egress (DNS / GET / SSRF). Never relax
     this without an explicit, documented threat-model exception.
+11. **`os.write` does not loop.** Linux caps a single `write(2)` at
+    `0x7FFFF000` (~2 GiB) and returns the partial count; Python's
+    `os.write` returns that count without retrying. Any path that
+    writes a large buffer to a raw fd **must** loop (see
+    `crypto/at_rest._write_all`) or use `Path.write_bytes()` /
+    `os.fdopen(...).write()` which loop internally. Hit production
+    once already with a 5 GiB GGUF; the regression tests in
+    `tests/unit/test_at_rest.py` pin the loop — don't bypass them.
 
 ## Where things live
 

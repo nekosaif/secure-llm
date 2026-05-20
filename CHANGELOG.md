@@ -6,6 +6,25 @@ Follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### Fixed
+- **At-rest decryption silently truncated multi-GiB models at 2 GiB.**
+  `crypto/at_rest.decrypt_to_tmpfs` used `os.write(fd, plaintext)`,
+  which is a thin `write(2)` wrapper that returns the bytes actually
+  written. On Linux a single `write(2)` is capped at `0x7FFFF000`
+  (~2 GiB), so any GGUF ≥2 GiB (e.g. Q4_K_M of a 9 B model) decrypted
+  short, with no exception. `llama.cpp` then rejected the file with
+  "tensor data not within file bounds — model is corrupted or
+  incomplete," which falsely pointed at the model. Symptom hit on a
+  Qwen3.5-9B Q4_K_M (5.24 GiB plaintext / 5.24 GiB ciphertext); any
+  model under 2 GiB was unaffected (which is why TinyLlama Q2_K at
+  461 MB always loaded fine). Fix: new `_write_all(fd, data)` helper
+  loops `os.write` until every byte is on disk, and raises if the
+  syscall ever returns 0 (POSIX EOF / disk-full). Three regression
+  tests pin the loop (short-write simulation, zero-return failure,
+  multi-MB end-to-end round-trip with the kernel-write monkey-patched
+  to chunk at 64 KiB). No security or confidentiality impact — this
+  was a write-side correctness bug, not an envelope/AAD/key issue.
+
 ### Added — v2.0 foundation (TEE attestation + multimodal)
 - **`AttestationBackend` Protocol** (server) + **`AttestationVerifier`
   Protocol** (client). Three server backends ship: `NoneBackend`

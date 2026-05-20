@@ -111,3 +111,34 @@ SNI-passthrough hard rule at the LB). Plan lives in `PLAN.md`.
   whenever a new field type starts going through them.
 - Per-tenant directory > per-tenant TOML field. The directory name is
   the policy declaration; the TOML field becomes informational.
+
+### 2026-05-20 — At-rest 2 GiB write truncation
+
+- Symptom: any model ≥2 GiB decrypted short. llama.cpp reported
+  "tensor data not within file bounds" — falsely pointed at the model
+  rather than the loader. Hit production while loading Qwen3.5-9B
+  Q4_K_M (5.24 GiB plaintext). Models under 2 GiB (TinyLlama Q2_K,
+  461 MB) always worked, which is why the bug went unnoticed for two
+  versions.
+- Root cause: `crypto/at_rest.decrypt_to_tmpfs` used `os.write(fd,
+  plaintext)`. Python's `os.write` is a thin `write(2)` wrapper that
+  returns the number of bytes the kernel actually wrote. On Linux a
+  single `write(2)` caps at `0x7FFFF000` bytes (~2 GiB); larger
+  buffers silently truncate. Python does **not** loop.
+- Fix: extracted a `_write_all(fd, data)` helper that loops
+  `os.write` over a memoryview until every byte lands on disk; raises
+  `OSError` if a write returns 0 (POSIX EOF / disk-full). Public API
+  unchanged.
+- Three regression tests pin the behavior: short-write monkey-patch
+  (forces 100-byte returns), zero-return error path, and a 2 MB
+  end-to-end encrypt → decrypt with the kernel write monkey-patched
+  to chunk at 64 KiB (proves the public path doesn't truncate even
+  when many syscalls are required).
+- No security impact: the envelope, AAD binding, replay window, age
+  identity, and tmpfs-unlink semantics were unaffected. This was a
+  pure write-side correctness bug.
+- Lesson: **`os.write` is not `f.write`**. Any path that does
+  `os.write(fd, very_large_buf)` should either loop, use a
+  `BufferedWriter`, or use `Path.write_bytes()`. Document this in the
+  agent invariants so a future refactor doesn't reintroduce raw
+  `os.write` against a big buffer.

@@ -45,6 +45,10 @@ global Python. `make help` lists every target.
    userdata binding. `Mock*` backend/verifier are CI-only.
 9. Image content parts (v2.0) honor only `data:` URIs; never silently
    follow `https://`. Refuse outbound egress from prompts.
+10. `os.write` does not loop (Linux caps a single `write(2)` at ~2 GiB).
+    Large-buffer writes must go through `_write_all`,
+    `Path.write_bytes()`, or `os.fdopen(...).write()`. Regression tests
+    in `tests/unit/test_at_rest.py`.
 
 ## Tree
 

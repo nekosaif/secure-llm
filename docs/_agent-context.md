@@ -24,3 +24,7 @@ move shared content here and have it emit both.)
    CI-only.
 10. **v2.0** — image content parts honor only `data:` URIs; `https://`
     URLs are refused server-side to prevent prompt-driven egress.
+11. **`os.write` does not loop** — Linux caps a single `write(2)` at
+    ~2 GiB; large-buffer writes must use `_write_all` /
+    `Path.write_bytes` / `os.fdopen(...).write()`. Regression tests
+    pin the behavior in `tests/unit/test_at_rest.py`.
